@@ -715,70 +715,125 @@ pub mod sbpf_to_anchor {
         let accounts = &ctx.accounts;
 
         // 提取账户信息
-        let source_data = accounts.source_data.to_account_info();
-        let raydium_data = accounts.raydium_data.to_account_info();
+        let source_data_account = accounts.source_data.to_account_info();
+        let dex_data_account = accounts.dex_data.to_account_info(); // 重命名为通用dex_data
         let output = &mut ctx.accounts.output;
+        let storage_data = &mut accounts.storage.load_mut()?;
 
         // 检查程序ID
-        let source_data_bytes = source_data.try_borrow_data()?;
+        let source_data_bytes = source_data_account.try_borrow_data()?;
 
         // 检查数据有效性
         if source_data_bytes.len() < 24 {
             return Ok(false);
         }
 
-        // 检查程序ID是否匹配Raydium V4
+        // 检查程序ID以确定DEX类型
         let first_id = u64::from_le_bytes(source_data_bytes[0..8].try_into().unwrap());
         let second_id = u64::from_le_bytes(source_data_bytes[8..16].try_into().unwrap());
         let third_id = u64::from_le_bytes(source_data_bytes[16..24].try_into().unwrap());
 
-        // 汇编中的比较逻辑
-        if first_id != 0xaa5b17bf6815db44 || second_id != 0x3bffd2f597cb8951 {
-            // ID不匹配，不是Raydium V4
-            return Ok(false);
+        // 识别DEX类型
+        if first_id == 0xaa5b17bf6815db44
+            && second_id == 0x3bffd2f597cb8951
+            && third_id == 0xb0186dfdb62b5d65
+        {
+            // --- Raydium V4 逻辑 ---
+            output.dex_type = 17; // 用于标识Raydium V4
+            let mut liquidity_buffer = [0u64; 2];
+            if !raydium_v4_parse_liquidity(dex_data_account.clone(), &mut liquidity_buffer)? {
+                return Ok(false);
+            }
+            let dex_data_bytes = dex_data_account.try_borrow_data()?;
+            output.is_reverse = false;
+            output.reserve_a = liquidity_buffer[0];
+            output.reserve_b = liquidity_buffer[1];
+            if dex_data_bytes.len() >= 32 {
+                output.token_a_address = Pubkey::new(&dex_data_bytes[0..32]);
+            }
+            if dex_data_bytes.len() >= 64 {
+                output.token_b_address = Pubkey::new(&dex_data_bytes[32..64]);
+            }
+            if dex_data_bytes.len() >= 72 {
+                output.fee_numerator =
+                    u64::from_le_bytes(dex_data_bytes[64..72].try_into().unwrap());
+            }
+            if dex_data_bytes.len() >= 80 {
+                output.fee_denominator =
+                    u64::from_le_bytes(dex_data_bytes[72..80].try_into().unwrap());
+            }
+            let copy_len = std::cmp::min(dex_data_bytes.len(), output.data.len());
+            if copy_len > 0 {
+                output.data[..copy_len].copy_from_slice(&dex_data_bytes[..copy_len]);
+            }
+            Ok(true)
+        } else if first_id == 0x5259294f8b5a2aa9 {
+            // Raydium CP Program ID (假设)
+            // --- Raydium CP 逻辑 ---
+            output.dex_type = 13; // 用于标识Raydium CP
+            let mut liquidity_buffer = [0u64; 2];
+            if !raydium_cp_parse_liquidity(dex_data_account.clone(), &mut liquidity_buffer)? {
+                return Ok(false); // 解析失败
+            }
+            let dex_data_bytes = dex_data_account.try_borrow_data()?;
+            // 设置输出字段，类似于Raydium V4，但根据CP协议调整
+            output.is_reverse = false; // CP可能需要不同的逻辑来确定
+            output.reserve_a = liquidity_buffer[0];
+            output.reserve_b = liquidity_buffer[1];
+            // TODO: 提取Raydium CP特定的token地址和费用信息
+            // output.token_a_address = ...;
+            // output.token_b_address = ...;
+            // output.fee_numerator = ...;
+            // output.fee_denominator = ...;
+            let copy_len = std::cmp::min(dex_data_bytes.len(), output.data.len());
+            if copy_len > 0 {
+                output.data[..copy_len].copy_from_slice(&dex_data_bytes[..copy_len]);
+            }
+            Ok(true)
+        } else if first_id == 0xcf5a6693f6e05601 {
+            // Pump.fun Program ID (假设)
+            // --- Pump.fun 逻辑 ---
+            output.dex_type = 12; // 用于标识Pump.fun
+            let mut liquidity_buffer = [0u64; 2];
+            if !pump_fun_parse_liquidity(dex_data_account.clone(), &mut liquidity_buffer)? {
+                return Ok(false); // 解析失败
+            }
+            let dex_data_bytes = dex_data_account.try_borrow_data()?;
+            // 设置输出字段，类似于Raydium V4，但根据Pump.fun协议调整
+            output.is_reverse = false; // Pump.fun可能需要不同的逻辑来确定
+            output.reserve_a = liquidity_buffer[0];
+            output.reserve_b = liquidity_buffer[1];
+            // TODO: 提取Pump.fun特定的token地址和费用信息
+            // output.token_a_address = ...;
+            // output.token_b_address = ...;
+            // output.fee_numerator = ...;
+            // output.fee_denominator = ...;
+            let copy_len = std::cmp::min(dex_data_bytes.len(), output.data.len());
+            if copy_len > 0 {
+                output.data[..copy_len].copy_from_slice(&dex_data_bytes[..copy_len]);
+            }
+            Ok(true)
+        } else {
+            // 未知或不支持的DEX类型
+            Ok(false)
         }
-
-        if third_id != 0xb0186dfdb62b5d65 {
-            // 检查第三个ID是否匹配
-            return Ok(false);
-        }
-
-        // 处理Raydium V4的逻辑
-        output.dex_type = 17; // 用于标识Raydium V4
-
-        // 解析流动性数据
-        let mut liquidity_buffer = [0u64; 2];
-
-        // 解析流动性
-        if !raydium_v4_parse_liquidity(raydium_data.clone(), &mut liquidity_buffer)? {
-            return Ok(false);
-        }
-
-        // 设置输出数据
-        let raydium_data_bytes = raydium_data.try_borrow_data()?;
-
-        // 设置is_reverse标志和其他字段
-        output.is_reverse = false;
-
-        // 成功解析
-        Ok(true)
     }
 
     #[derive(Accounts)]
     pub struct DeserializeSwap<'info> {
-        /// CHECK: 源数据账户
+        /// CHECK: 源数据账户 (包含程序ID)
         pub source_data: AccountInfo<'info>,
 
-        /// CHECK: Raydium数据账户
-        pub raydium_data: AccountInfo<'info>,
+        /// CHECK: 相关DEX的数据账户 (如 Raydium pool, Pump.fun bonding curve)
+        pub dex_data: AccountInfo<'info>,
 
         /// 输出数据账户
         #[account(mut)]
         pub output: Account<'info, SwapData>,
 
         /// 存储区域
-        #[account(mut)]
-        pub storage: Account<'info, StorageData>,
+        #[account(zero)] // 使用zero确保初始为空,防止残留数据
+        pub storage: AccountLoader<'info, StorageData>,
     }
 
     // 新增SwapData结构体
@@ -859,6 +914,36 @@ pub mod sbpf_to_anchor {
 
         // 设置is_reverse标志和其他字段
         output.is_reverse = false;
+        output.reserve_a = liquidity_buffer[0]; // 存储解析出的流动性
+        output.reserve_b = liquidity_buffer[1];
+
+        // 从Raydium账户数据中提取token地址和其他必要信息
+        // 注意：偏移量基于汇编代码分析，需要根据实际Raydium V4协议验证
+        if raydium_data_bytes.len() >= 32 {
+            // 假设token_a_address在偏移量0
+            output.token_a_address = Pubkey::new(&raydium_data_bytes[0..32]);
+        }
+        if raydium_data_bytes.len() >= 64 {
+            // 假设token_b_address在偏移量32
+            output.token_b_address = Pubkey::new(&raydium_data_bytes[32..64]);
+        }
+        if raydium_data_bytes.len() >= 72 {
+            // 假设fee_numerator在偏移量64
+            output.fee_numerator =
+                u64::from_le_bytes(raydium_data_bytes[64..72].try_into().unwrap());
+        }
+        if raydium_data_bytes.len() >= 80 {
+            // 假设fee_denominator在偏移量72
+            output.fee_denominator =
+                u64::from_le_bytes(raydium_data_bytes[72..80].try_into().unwrap());
+        }
+
+        // 使用copy_from_slice将Raydium数据复制到output.data
+        // 确定要复制的数据范围和长度
+        let copy_len = std::cmp::min(raydium_data_bytes.len(), output.data.len());
+        if copy_len > 0 {
+            output.data[..copy_len].copy_from_slice(&raydium_data_bytes[..copy_len]);
+        }
 
         // 成功解析
         Ok(true)
@@ -879,6 +964,141 @@ pub mod sbpf_to_anchor {
         /// 存储区域
         #[account(mut)]
         pub storage: Account<'info, StorageData>,
+    }
+
+    // --- Exit Logic ---
+    pub fn exit_program(ctx: Context<ExitProgram>) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 1. 反序列化Swap信息
+        let swap_info_accounts = DeserializeSwap {
+            source_data: accounts.input_program_id.to_account_info(),
+            dex_data: accounts.input_dex_data.to_account_info(),
+            output: accounts.internal_swap_data.clone(), // 需要Clone或传递可变引用
+            storage: accounts.internal_storage.clone(),  // 需要Clone或传递可变引用
+        };
+        // 创建一个临时的 Context 用于调用 deserialize_swap
+        // 注意：这部分可能需要根据DeserializeSwap的实际需求调整
+        // let deserialize_ctx = Context::new(...);
+        // let is_swap_valid = deserialize_swap(deserialize_ctx)?;
+        let is_swap_valid = true; // 暂时代替 deserialize_swap 调用
+
+        if !is_swap_valid {
+            msg!("Swap deserialization failed.");
+            return Ok(()); // 或者返回错误
+        }
+
+        // 2. 获取报价和流动性 (假设需要类似 GetQuoteAndLiquidity 的账户)
+        let quote_accounts = GetQuoteAndLiquidity {
+            input_data: accounts.input_dex_data.to_account_info(), // 重用DEX数据账户
+            amount: accounts.input_amount.clone(),
+            reverse: accounts.input_reverse.clone(),
+        };
+        // let quote_ctx = Context::new(...);
+        // let (quote, reserve_a, reserve_b) = get_quote_and_liquidity(quote_ctx, accounts.internal_swap_data.dex_type)?;
+        let (quote, reserve_a, reserve_b) = (1000, 50000, 50000); // 暂时代替调用
+
+        // 3. 执行交换 (需要构建指令和账户元数据)
+        let instruction_data: Vec<u8> = vec![]; // TODO: 构建实际指令数据
+        let execute_swap_accounts = [
+            // TODO: 填充执行交换所需的账户信息
+            accounts.input_dex_data.to_account_info(), // 示例
+            accounts.user_token_account_a.to_account_info(), // 示例
+            accounts.user_token_account_b.to_account_info(), // 示例
+        ];
+        let seeds = &[&[u8]] // TODO: 如果需要PDA签名，提供种子
+            ;
+        // let execute_result = execute_swap(
+        //     &accounts.target_program.key(), // 目标程序ID
+        //     &execute_swap_accounts,
+        //     &instruction_data,
+        //     seeds
+        // )?;
+        let execute_result = 0; // 暂时代替调用
+
+        if execute_result != 0 {
+            // 假设0表示成功
+            msg!("Execute swap failed.");
+            return Ok(()); // 或者返回错误
+        }
+
+        // TODO: 从 execute_result 中提取实际的输出金额
+        let actual_output_amount = quote; // 暂用quote代替
+
+        // 4. 更新价格和统计信息
+        // let price_update_flag = ...; // 从某处获取标志
+        // token_data_update_price(accounts.token_data_account.to_account_info(), price_update_flag)?;
+        // let stats_update_flag = ...; // 从某处获取标志
+        // token_data_update_token_stats(
+        //     accounts.token_stats_account.to_account_info(),
+        //     accounts.token_data_account.to_account_info(), // 传递价格账户
+        //     stats_update_flag
+        // )?;
+
+        // 5. 可选的转账
+        // let transfer_amount = ...; // 计算需要转账的金额
+        // let transfer_seeds = &[&[u8]]; // PDA种子
+        // if transfer_amount > 0 {
+        //     transfer_(
+        //         accounts.source_transfer_account.to_account_info(),
+        //         accounts.destination_transfer_account.to_account_info(),
+        //         accounts.pda_authority.to_account_info(), // PDA作为授权
+        //         transfer_amount,
+        //         transfer_seeds
+        //     )?;
+        // }
+
+        msg!("Exit program executed successfully.");
+        Ok(())
+    }
+
+    #[derive(Accounts)]
+    pub struct ExitProgram<'info> {
+        // --- 输入账户 (来自用户或前端) ---
+        /// CHECK: 包含程序ID的账户
+        pub input_program_id: AccountInfo<'info>,
+        /// CHECK: 相关DEX的数据账户
+        pub input_dex_data: AccountInfo<'info>,
+        /// 输入金额账户
+        pub input_amount: Account<'info, AmountData>,
+        /// 交换方向标志
+        pub input_reverse: Account<'info, ReverseFlag>,
+        /// CHECK: 目标DEX或Token程序
+        pub target_program: AccountInfo<'info>,
+        /// CHECK: 用户Token账户 A
+        #[account(mut)]
+        pub user_token_account_a: AccountInfo<'info>,
+        /// CHECK: 用户Token账户 B
+        #[account(mut)]
+        pub user_token_account_b: AccountInfo<'info>,
+
+        // --- 内部状态账户 (由程序管理) ---
+        /// 内部存储的反序列化数据
+        #[account(mut)]
+        pub internal_swap_data: Account<'info, SwapData>,
+        /// 内部存储区域
+        #[account(mut)]
+        pub internal_storage: AccountLoader<'info, StorageData>,
+        /// CHECK: 可能需要更新的代币状态账户
+        #[account(mut)]
+        pub token_data_account: AccountInfo<'info>,
+        /// CHECK: 可能需要更新的代币统计账户
+        #[account(mut)]
+        pub token_stats_account: AccountInfo<'info>,
+
+        // --- 用于CPI和转账的账户 ---
+        /// CHECK: 转账源账户 (可能是程序控制的)
+        #[account(mut)]
+        pub source_transfer_account: AccountInfo<'info>,
+        /// CHECK: 转账目标账户
+        #[account(mut)]
+        pub destination_transfer_account: AccountInfo<'info>,
+        /// CHECK: PDA 授权账户 (如果需要签名转账)
+        pub pda_authority: AccountInfo<'info>,
+
+        // --- 系统账户 ---
+        pub token_program: Program<'info, anchor_spl::token::Token>,
+        pub system_program: Program<'info, System>,
     }
 }
 
@@ -1802,4 +2022,63 @@ impl<'info> FastPathAutoSwapOutPumpFun<'info> {
         // 实际实现中需要注册sandwich追踪
         Ok(())
     }
+}
+
+// 添加 Raydium CP 解析流动性占位符函数
+fn raydium_cp_parse_liquidity(
+    cp_data: AccountInfo,
+    liquidity_buffer: &mut [u64; 2],
+) -> Result<bool> {
+    // TODO: 实现Raydium CP流动性解析逻辑
+    // 暂时返回true表示成功
+    msg!("Raydium CP liquidity parsing not implemented yet.");
+    Ok(true)
+}
+
+// 添加 execute_swap 占位符函数
+fn execute_swap(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+    signers_seeds: &[&[&[u8]]],
+) -> Result<u64> {
+    // TODO: 实现实际的交换CPI调用
+    // 使用 invoke_signed
+    msg!("execute_swap not fully implemented yet - CPI required.");
+    // 暂时返回0表示成功，实际应返回交换结果
+    Ok(0)
+}
+
+// 添加 token_data_update_price 占位符函数
+fn token_data_update_price(
+    token_data_account: AccountInfo,
+    flag: u64, // 对应汇编中的r8
+) -> Result<()> {
+    // TODO: 实现更新价格逻辑
+    msg!("token_data_update_price not implemented yet.");
+    Ok(())
+}
+
+// 添加 token_data_update_token_stats 占位符函数
+fn token_data_update_token_stats(
+    stats_account: AccountInfo,
+    price_data_account: AccountInfo,
+    flag: u64, // 对应汇编中的r4
+) -> Result<()> {
+    // TODO: 实现更新统计信息逻辑
+    msg!("token_data_update_token_stats not implemented yet.");
+    Ok(())
+}
+
+// 添加 transfer_ 占位符函数
+fn transfer_(
+    source_account: AccountInfo,
+    destination_account: AccountInfo,
+    authority: AccountInfo,
+    amount: u64,
+    signers_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    // TODO: 实现转账CPI调用
+    msg!("transfer_ not implemented yet - CPI required.");
+    Ok(())
 }
