@@ -116,11 +116,11 @@ pub mod sbpf_to_anchor {
         match dex_type {
             0 => {
                 // Raydium
-                if data.len() < 8 {
+                if data.len() < 16 {
                     return Err(error!(ErrorCode::InvalidInput));
                 }
                 raydium_get_quote_and_liquidity(
-                    &data[8..],
+                    &data[0..16],
                     &mut ctx.accounts.output.liquidity,
                     ctx.accounts.side.side,
                 )
@@ -511,35 +511,61 @@ fn raydium_get_liquidity(data: &[u8], output: &mut Liquidity) -> Result<()> {
 }
 
 fn raydium_get_quote_and_liquidity(data: &[u8], output: &mut Liquidity, side: bool) -> Result<u64> {
-    // 先获取流动性
-    raydium_get_liquidity(data, output)?;
-
-    // 然后计算报价
-    let reserve_a = output.reserve_a;
-    let reserve_b = output.reserve_b;
-
-    // 根据side计算报价
-    let fee_numerator = 25; // 0.25% fee
-    let fee_denominator = 10000;
-
-    if side {
-        // Sell token A for B
-        let amount_out = (reserve_b * 1000) / (reserve_a + 1000)
-            * (fee_denominator - fee_numerator)
-            / fee_denominator;
-        Ok(amount_out)
-    } else {
-        // Buy token A with B
-        let amount_out = (reserve_a * 1000) / (reserve_b + 1000)
-            * (fee_denominator - fee_numerator)
-            / fee_denominator;
-        Ok(amount_out)
+    // 检查输入数据长度
+    if data.len() < 16 {
+        return Err(error!(ErrorCode::InvalidInput));
     }
+
+    // 读取reserves
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&data[0..8]);
+    let reserve_a = u64::from_le_bytes(bytes);
+    output.reserve_a = reserve_a;
+
+    bytes.copy_from_slice(&data[8..16]);
+    let reserve_b = u64::from_le_bytes(bytes);
+    output.reserve_b = reserve_b;
+
+    // 常量定义
+    const FEE_NUMERATOR: u64 = 25; // 0.25% fee
+    const FEE_DENOMINATOR: u64 = 10000;
+
+    // 根据side选择输入和输出reserve
+    let (reserve_in, reserve_out) = if side {
+        (reserve_a, reserve_b)
+    } else {
+        (reserve_b, reserve_a)
+    };
+
+    // 使用1000作为基准输入金额进行报价计算
+    let amount_in: u64 = 1000;
+
+    // 使用checked操作进行安全的大数计算
+    let amount_in_with_fee = (amount_in as u128)
+        .checked_mul((FEE_DENOMINATOR - FEE_NUMERATOR) as u128)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?;
+
+    let numerator = amount_in_with_fee
+        .checked_mul(reserve_out as u128)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?;
+
+    let denominator = (reserve_in as u128)
+        .checked_mul(FEE_DENOMINATOR as u128)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?
+        .checked_add(amount_in_with_fee)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?;
+
+    let amount_out = numerator
+        .checked_div(denominator)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?
+        .try_into()
+        .map_err(|_| error!(ErrorCode::CalculationFailed))?;
+
+    Ok(amount_out)
 }
 
 // PumpFun实现
 fn pump_fun_get_quote(data: &[u8]) -> Result<u64> {
-    // 简化实现
     if data.len() < 16 {
         return Err(error!(ErrorCode::InvalidInput));
     }
@@ -552,18 +578,31 @@ fn pump_fun_get_quote(data: &[u8]) -> Result<u64> {
     bytes.copy_from_slice(&data[8..16]);
     let reserve_b = u64::from_le_bytes(bytes);
 
-    // 使用不同的fee
-    let fee_numerator = 100; // 1% fee
-    let fee_denominator = 10000;
+    // PumpFun使用1%的手续费
+    const FEE_NUMERATOR: u64 = 100; // 1% fee
+    const FEE_DENOMINATOR: u64 = 10000;
+    const BASE_AMOUNT: u64 = 1000; // 基准输入金额
 
-    // 简化计算
-    let amount_out = (reserve_b * 1000) / (reserve_a + 1000) * (fee_denominator - fee_numerator)
-        / fee_denominator;
-    Ok(amount_out)
+    // 使用优化的计算方法
+    let amount_in_with_fee = (BASE_AMOUNT as u128)
+        .checked_mul((FEE_DENOMINATOR - FEE_NUMERATOR) as u128)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?;
+
+    let numerator = amount_in_with_fee
+        .checked_mul(reserve_b as u128)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?;
+
+    let denominator = (reserve_a as u128)
+        .checked_mul(FEE_DENOMINATOR as u128)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?
+        .checked_add(amount_in_with_fee)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?;
+
+    // 使用优化的除法
+    optimize_division(numerator, denominator)
 }
 
 fn pump_fun_get_liquidity(data: &[u8], output: &mut Liquidity) -> Result<()> {
-    // 简化实现，与Raydium类似但字段位置可能不同
     if data.len() < 16 {
         return Err(error!(ErrorCode::InvalidInput));
     }
@@ -571,10 +610,28 @@ fn pump_fun_get_liquidity(data: &[u8], output: &mut Liquidity) -> Result<()> {
     // 读取reserves
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(&data[0..8]);
-    output.reserve_a = u64::from_le_bytes(bytes);
+    let reserve_a = u64::from_le_bytes(bytes);
 
     bytes.copy_from_slice(&data[8..16]);
-    output.reserve_b = u64::from_le_bytes(bytes);
+    let reserve_b = u64::from_le_bytes(bytes);
+
+    // 验证reserves
+    if reserve_a == 0 || reserve_b == 0 {
+        return Err(error!(ErrorCode::InvalidInput));
+    }
+
+    // 使用优化的乘法来验证k值
+    let k = calculate_price_high_precision(reserve_a, reserve_b)?;
+
+    // 验证k值是否在合理范围内
+    const MIN_K: u128 = 1_000_000; // 最小k值
+    if k < MIN_K {
+        return Err(error!(ErrorCode::InvalidInput));
+    }
+
+    // 设置输出
+    output.reserve_a = reserve_a;
+    output.reserve_b = reserve_b;
 
     Ok(())
 }
@@ -584,30 +641,29 @@ fn pump_fun_get_quote_and_liquidity(
     output: &mut Liquidity,
     side: bool,
 ) -> Result<u64> {
-    // 先获取流动性
+    // 先获取并验证流动性
     pump_fun_get_liquidity(data, output)?;
 
-    // 然后计算报价
-    let reserve_a = output.reserve_a;
-    let reserve_b = output.reserve_b;
+    // PumpFun使用1%的手续费
+    const FEE_NUMERATOR: u64 = 100; // 1% fee
+    const FEE_DENOMINATOR: u64 = 10000;
+    const BASE_AMOUNT: u64 = 1000; // 基准输入金额
 
-    // 根据side计算报价，使用不同的fee
-    let fee_numerator = 100; // 1% fee
-    let fee_denominator = 10000;
-
-    if side {
-        // Sell token A for B
-        let amount_out = (reserve_b * 1000) / (reserve_a + 1000)
-            * (fee_denominator - fee_numerator)
-            / fee_denominator;
-        Ok(amount_out)
+    // 根据side选择输入和输出reserve
+    let (reserve_in, reserve_out) = if side {
+        (output.reserve_a, output.reserve_b)
     } else {
-        // Buy token A with B
-        let amount_out = (reserve_a * 1000) / (reserve_b + 1000)
-            * (fee_denominator - fee_numerator)
-            / fee_denominator;
-        Ok(amount_out)
-    }
+        (output.reserve_b, output.reserve_a)
+    };
+
+    // 使用优化的价格计算
+    calculate_optimal_price(
+        reserve_in,
+        reserve_out,
+        BASE_AMOUNT,
+        FEE_NUMERATOR,
+        FEE_DENOMINATOR,
+    )
 }
 
 // 内部函数，用于组合调用
@@ -698,5 +754,382 @@ fn calculate_expected_profit(
         Ok(amount_out - amount_in)
     } else {
         Ok(0)
+    }
+}
+
+// 添加辅助函数用于大数计算
+fn safe_multiply_u64(a: u64, b: u64) -> Result<u64> {
+    (a as u128)
+        .checked_mul(b as u128)
+        .and_then(|result| result.try_into().ok())
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))
+}
+
+fn safe_divide_u64(a: u64, b: u64) -> Result<u64> {
+    if b == 0 {
+        return Err(error!(ErrorCode::CalculationFailed));
+    }
+    Ok(a / b)
+}
+
+// 添加优化函数用于位操作和大数计算
+fn optimize_division(numerator: u128, denominator: u128) -> Result<u64> {
+    // 检查除数是否为0
+    if denominator == 0 {
+        return Err(error!(ErrorCode::CalculationFailed));
+    }
+
+    // 如果分子为0，直接返回0
+    if numerator == 0 {
+        return Ok(0);
+    }
+
+    // 计算前导零的数量
+    let leading_zeros = numerator.leading_zeros().min(denominator.leading_zeros());
+
+    // 左移以最大化精度
+    let shifted_numerator = numerator << leading_zeros;
+    let shifted_denominator = denominator << leading_zeros;
+
+    // 执行除法
+    let result = shifted_numerator
+        .checked_div(shifted_denominator)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?;
+
+    // 转换回u64
+    result
+        .try_into()
+        .map_err(|_| error!(ErrorCode::CalculationFailed))
+}
+
+// 添加价格计算优化函数
+fn calculate_price(reserve_a: u64, reserve_b: u64) -> Result<u64> {
+    // 使用u128进行中间计算
+    let reserve_a = reserve_a as u128;
+    let reserve_b = reserve_b as u128;
+
+    // 计算价格比率
+    optimize_division(reserve_a, reserve_b)
+}
+
+// 修改 pump_fun_is_valid 函数实现，使用优化的价格计算
+fn pump_fun_is_valid(data: &[u8]) -> Result<bool> {
+    if data.len() < 16 {
+        return Err(error!(ErrorCode::InvalidInput));
+    }
+
+    // 读取reserves
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&data[0..8]);
+    let reserve_a = u64::from_le_bytes(bytes);
+
+    bytes.copy_from_slice(&data[8..16]);
+    let reserve_b = u64::from_le_bytes(bytes);
+
+    // 检查reserves是否大于1001
+    if reserve_a <= 1001 || reserve_b <= 1001 {
+        return Ok(false);
+    }
+
+    // 使用优化的价格计算
+    let price = calculate_price(reserve_a, reserve_b)?;
+
+    // 检查价格是否在合理范围内
+    const MAX_PRICE: u64 = 100000; // 1e5
+    const MIN_PRICE: u64 = 1; // 1e-5 after division
+
+    Ok(price >= MIN_PRICE && price <= MAX_PRICE)
+}
+
+// 添加更多优化函数
+fn optimize_multiplication(a: u64, b: u64) -> Result<u64> {
+    // 如果其中一个数为0，直接返回0
+    if a == 0 || b == 0 {
+        return Ok(0);
+    }
+
+    // 使用u128进行中间计算
+    let result = (a as u128)
+        .checked_mul(b as u128)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))?;
+
+    // 转换回u64
+    result
+        .try_into()
+        .map_err(|_| error!(ErrorCode::CalculationFailed))
+}
+
+fn optimize_addition(a: u64, b: u64) -> Result<u64> {
+    a.checked_add(b)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))
+}
+
+// 添加价格计算的高精度版本
+fn calculate_price_high_precision(reserve_a: u64, reserve_b: u64) -> Result<u128> {
+    // 使用u128进行所有计算以保持高精度
+    let reserve_a = reserve_a as u128;
+    let reserve_b = reserve_b as u128;
+
+    // 如果除数为0，返回错误
+    if reserve_b == 0 {
+        return Err(error!(ErrorCode::CalculationFailed));
+    }
+
+    // 计算前导零以最大化精度
+    let leading_zeros = reserve_a.leading_zeros().min(reserve_b.leading_zeros());
+
+    // 左移以最大化精度
+    let shifted_reserve_a = reserve_a << leading_zeros;
+    let shifted_reserve_b = reserve_b << leading_zeros;
+
+    // 执行除法
+    shifted_reserve_a
+        .checked_div(shifted_reserve_b)
+        .ok_or_else(|| error!(ErrorCode::CalculationFailed))
+}
+
+// 添加位操作优化函数
+fn optimize_bit_shift(value: u64, shift_amount: u32, is_left: bool) -> Result<u64> {
+    if shift_amount >= 64 {
+        return Ok(0);
+    }
+
+    if is_left {
+        value.checked_shl(shift_amount)
+    } else {
+        value.checked_shr(shift_amount)
+    }
+    .ok_or_else(|| error!(ErrorCode::CalculationFailed))
+}
+
+// 添加高精度乘法函数
+fn high_precision_multiply(a: u64, b: u64) -> Result<(u64, u64)> {
+    // 将输入分解为高32位和低32位
+    let a_high = a >> 32;
+    let a_low = a & 0xFFFFFFFF;
+    let b_high = b >> 32;
+    let b_low = b & 0xFFFFFFFF;
+
+    // 计算四个部分的乘积
+    let low_low = a_low * b_low;
+    let high_low = a_high * b_low;
+    let low_high = a_low * b_high;
+    let high_high = a_high * b_high;
+
+    // 组合结果
+    let mid = high_low + low_high;
+    let (low, carry) = low_low.overflowing_add(mid << 32);
+    let high = high_high + (mid >> 32) + if carry { 1 } else { 0 };
+
+    Ok((high, low))
+}
+
+// 添加优化的价格计算函数
+fn calculate_optimal_price(
+    reserve_a: u64,
+    reserve_b: u64,
+    amount_in: u64,
+    fee_numerator: u64,
+    fee_denominator: u64,
+) -> Result<u64> {
+    // 验证输入
+    if reserve_a == 0 || reserve_b == 0 || amount_in == 0 {
+        return Err(error!(ErrorCode::InvalidInput));
+    }
+
+    // 计算手续费调整后的输入金额
+    let fee_adjusted_amount = optimize_multiplication(amount_in, fee_denominator - fee_numerator)?;
+
+    // 使用高精度乘法计算分子
+    let (numerator_high, numerator_low) = high_precision_multiply(fee_adjusted_amount, reserve_b)?;
+
+    // 计算分母
+    let denominator_base = optimize_multiplication(reserve_a, fee_denominator)?;
+    let denominator = optimize_addition(denominator_base, fee_adjusted_amount)?;
+
+    // 如果分子的高32位不为0，需要特殊处理
+    if numerator_high > 0 {
+        // 找到合适的位移量
+        let shift = numerator_high.leading_zeros();
+
+        // 调整分子和分母
+        let adjusted_numerator = (numerator_high << shift) | (numerator_low >> (64 - shift));
+        let adjusted_denominator = denominator >> (64 - shift);
+
+        // 执行除法
+        if adjusted_denominator == 0 {
+            return Err(error!(ErrorCode::CalculationFailed));
+        }
+
+        Ok(adjusted_numerator / adjusted_denominator)
+    } else {
+        // 直接使用低64位进行除法
+        if denominator == 0 {
+            return Err(error!(ErrorCode::CalculationFailed));
+        }
+
+        Ok(numerator_low / denominator)
+    }
+}
+
+// 添加常量定义
+const MAX_CONSTANT: u64 = 0x68db8bac710cc;
+
+// 添加计算利润的函数
+fn calculate_profit(
+    input_amount: u64,
+    quote: u64,
+    side: bool,
+    dex_info: &DexInfo,
+    output: &mut Liquidity,
+) -> Result<i64> {
+    // 获取报价和流动性
+    let quote_amount = get_quote_and_liquidity_internal(dex_info, output, side)?;
+
+    // 获取另一个方向的流动性
+    get_liquidity_internal(dex_info, output, !side)?;
+
+    // 获取反向报价
+    let reverse_quote = get_quote_internal(output, quote_amount, !side)?;
+
+    // 计算利润
+    Ok(reverse_quote as i64 - input_amount as i64)
+}
+
+// 添加检查买入金额是否过大的函数
+fn is_buy_amount_too_big(
+    dex_info: &DexInfo,
+    amount: u64,
+    quote: u64,
+    side: bool,
+    output: &mut Liquidity,
+) -> Result<bool> {
+    // 获取流动性
+    get_liquidity_internal(dex_info, output, side)?;
+
+    // 获取报价
+    let current_quote = get_quote_internal(output, amount, side)?;
+
+    // 如果报价大于给定的quote，返回true
+    if quote > current_quote {
+        return Ok(true);
+    }
+
+    // 检查DEX是否有效
+    let is_valid = is_valid_internal(dex_info)?;
+    Ok(!is_valid)
+}
+
+// 添加计算最大金额的函数
+fn calculate_hinted_max_amount(
+    reserve_a: u64,
+    reserve_b: u64,
+    fee_numerator: u64,
+    fee_multiplier: u64,
+) -> Result<u64> {
+    // 如果reserve_b大于reserve_a，返回0
+    if reserve_b > reserve_a {
+        return Ok(0);
+    }
+
+    // 计算可用余额
+    let available = reserve_a - reserve_b;
+
+    // 计算手续费因子
+    let fee_denominator = 10000;
+    let fee_factor = fee_denominator - fee_numerator;
+
+    // 根据available的大小选择计算方式
+    let mut result = if available > MAX_CONSTANT {
+        // 先除后乘以fee_factor
+        let temp = safe_divide_u64(available, fee_factor)?;
+        optimize_multiplication(temp, fee_denominator)?
+    } else {
+        // 先乘后除以fee_factor
+        let temp = optimize_multiplication(available, fee_denominator)?;
+        safe_divide_u64(temp, fee_factor)?
+    };
+
+    // 处理结果与fee_multiplier的乘除操作
+    result = if result > MAX_CONSTANT {
+        // 先除后乘以fee_multiplier
+        let temp = safe_divide_u64(result, fee_denominator)?;
+        optimize_multiplication(temp, fee_multiplier)?
+    } else {
+        // 先乘后除以fee_multiplier
+        let temp = optimize_multiplication(result, fee_multiplier)?;
+        safe_divide_u64(temp, fee_denominator)?
+    };
+
+    Ok(result)
+}
+
+// 添加计算上限的函数
+fn calculate_upper_bound(
+    reserve_a: u64,
+    reserve_info: &ReserveInfo,
+    fee_multiplier: u64,
+    is_token_a: bool,
+) -> Result<u64> {
+    // 初始化结果为0
+    let mut result: u64 = 0;
+
+    // 确定手续费
+    let fee_numerator = if reserve_info.dex_type == 0 {
+        9975 // Raydium fee
+    } else {
+        9900 // PumpFun fee
+    };
+
+    // 获取相应的reserve值
+    let reserve_value = if is_token_a {
+        reserve_info.reserve_a
+    } else {
+        reserve_info.reserve_b
+    };
+
+    // 如果reserve_value大于reserve_a，进行计算
+    if reserve_value > reserve_a {
+        // 计算可用余额
+        let available = reserve_value - reserve_a;
+
+        // 根据available的大小选择计算方式
+        let mut temp = if available > MAX_CONSTANT {
+            // 先除后乘
+            let div_result = safe_divide_u64(available, fee_numerator)?;
+            optimize_multiplication(div_result, 10000)?
+        } else {
+            // 先乘后除
+            let mul_result = optimize_multiplication(available, 10000)?;
+            safe_divide_u64(mul_result, fee_numerator)?
+        };
+
+        // 处理结果与fee_multiplier的乘除操作
+        result = if temp > MAX_CONSTANT {
+            // 先除后乘
+            let div_result = safe_divide_u64(temp, 10000)?;
+            optimize_multiplication(div_result, fee_multiplier)?
+        } else {
+            // 先乘后除
+            let mul_result = optimize_multiplication(temp, fee_multiplier)?;
+            safe_divide_u64(mul_result, 10000)?
+        };
+    }
+
+    Ok(result)
+}
+
+// 添加 is_valid_internal 函数
+fn is_valid_internal(dex_info: &DexInfo) -> Result<bool> {
+    match dex_info.dex_type {
+        0 => {
+            // Raydium
+            raydium_is_valid(&dex_info.pool_data)
+        }
+        1 => {
+            // PumpFun
+            pump_fun_is_valid(&dex_info.pool_data)
+        }
+        _ => Err(error!(ErrorCode::UnsupportedDex)),
     }
 }
