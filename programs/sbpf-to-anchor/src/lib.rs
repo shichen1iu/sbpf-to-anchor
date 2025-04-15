@@ -1911,6 +1911,100 @@ pub mod sbpf_to_anchor {
         Static,
         Dynamic,
     }
+
+    #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy)]
+    pub struct KplData {
+        pub initialized: bool,
+        pub keep_profit_bps: u16,
+        pub threshold_amount: u64,
+    }
+
+    #[derive(AnchorSerialize, AnchorDeserialize)]
+    pub struct SandwichData {
+        pub frontrun_amount: u64,
+        pub frontrun_price: u64,
+        pub backrun_amount: u64,
+        pub backrun_price: u64,
+        pub profit: u64,
+        pub is_buy: bool,
+        pub is_complete: bool,
+        pub validator_id: Pubkey,
+    }
+
+    impl SandwichData {
+        pub fn update_frontrun(
+            &mut self,
+            amount_in: u64,
+            amount_out: u64,
+            price: u64,
+            is_buy: bool,
+            validator_id: Pubkey,
+        ) {
+            self.frontrun_amount = amount_in;
+            self.frontrun_price = price;
+            self.is_buy = is_buy;
+            self.validator_id = validator_id;
+            self.is_complete = false;
+        }
+
+        pub fn update_backrun(
+            &mut self,
+            amount_in: u64,
+            amount_out: u64,
+            price: u64,
+        ) -> Result<()> {
+            require!(!self.is_complete, ErrorCode::SandwichAlreadyComplete);
+
+            self.backrun_amount = amount_in;
+            self.backrun_price = price;
+            self.is_complete = true;
+
+            // Calculate profit based on direction
+            if self.is_buy {
+                self.profit = amount_out
+                    .checked_sub(self.frontrun_amount)
+                    .ok_or(ErrorCode::ArithmeticError)?;
+            } else {
+                self.profit = amount_in
+                    .checked_sub(self.frontrun_amount)
+                    .ok_or(ErrorCode::ArithmeticError)?;
+            }
+
+            Ok(())
+        }
+    }
+
+    #[derive(Accounts)]
+    pub struct UpdateKpl<'info> {
+        #[account(mut)]
+        pub kpl_account: Account<'info, KplData>,
+        pub authority: Signer<'info>,
+    }
+
+    #[derive(Accounts)]
+    pub struct UpdateSandwich<'info> {
+        #[account(mut)]
+        pub sandwich_account: Account<'info, SandwichData>,
+        pub authority: Signer<'info>,
+    }
+
+    impl<'info> UpdateKpl<'info> {
+        pub fn update_kpl(&mut self, keep_profit_bps: u16, threshold_amount: u64) -> Result<()> {
+            let kpl = &mut self.kpl_account;
+            kpl.initialized = true;
+            kpl.keep_profit_bps = keep_profit_bps;
+            kpl.threshold_amount = threshold_amount;
+            Ok(())
+        }
+    }
+
+    #[error_code]
+    pub enum ErrorCode {
+        #[msg("Arithmetic error occurred")]
+        ArithmeticError,
+        #[msg("Sandwich trade already complete")]
+        SandwichAlreadyComplete,
+    }
 }
 
 // Internal implementation functions
