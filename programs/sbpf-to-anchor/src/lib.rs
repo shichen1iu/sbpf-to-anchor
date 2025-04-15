@@ -3390,3 +3390,257 @@ fn normalize_subnormal(man: u32) -> u32 {
     }
     m
 }
+
+// 浮点数操作函数
+pub fn float_normalize(value: u64) -> Result<u64> {
+    if value == 0 {
+        return Ok(0);
+    }
+
+    // 计算前导零的数量
+    let mut v = value;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    v |= v >> 32;
+    v = !v;
+
+    let mut count = 0;
+    count += (v >> 1) & 0x5555555555555555;
+    count += (count >> 2) & 0x3333333333333333;
+    count += count >> 4;
+    count &= 0x0f0f0f0f0f0f0f0f;
+    count *= 0x0101010101010101;
+    count >>= 56;
+
+    // 规范化值
+    let shifted = value << count;
+    let exp = (count << 52) as u64;
+    let mut result = (shifted >> 11) - exp;
+
+    // 处理舍入
+    let mask = !shifted;
+    let round_bit = (shifted << 53) >> 63;
+    result -= (round_bit & mask);
+    result += (shifted >> 63);
+
+    // 添加偏移
+    result += 0x43d0000000000000;
+
+    Ok(result)
+}
+
+// 64位位移操作函数
+pub fn bit_shift_64(value: (u64, u64), shift: i64) -> Result<(u64, u64)> {
+    let mut high = value.0;
+    let mut low = value.1;
+
+    if (shift & 64) == 0 {
+        if shift == 0 {
+            return Ok((high, low));
+        }
+
+        let shift_amount = shift & 63;
+        let new_low = low << shift_amount;
+        let carry = high >> (64 - shift_amount);
+        let new_high = high << shift_amount;
+
+        Ok((new_high, new_low | carry))
+    } else {
+        let shift_amount = shift & 63;
+        Ok((low << shift_amount, 0))
+    }
+}
+
+// 浮点数特殊值处理函数
+pub fn handle_float_special_cases(a: u64, b: u64) -> Result<u64> {
+    let sign_mask = 0x8000000000000000u64;
+    let exp_mask = 0x7ff0000000000000u64;
+    let mantissa_mask = 0x000fffffffffffffu64;
+
+    let sign = (a ^ b) & sign_mask;
+    let a_exp = (a >> 52) & 0x7ff;
+    let b_exp = (b >> 52) & 0x7ff;
+
+    // 处理NaN
+    if (a & exp_mask) == exp_mask && (a & mantissa_mask) != 0
+        || (b & exp_mask) == exp_mask && (b & mantissa_mask) != 0
+    {
+        return Ok(0x7ff8000000000000);
+    }
+
+    // 处理无穷大
+    if a_exp == 0x7ff {
+        if b_exp == 0x7ff {
+            return Ok(0x7ff8000000000000);
+        }
+        return Ok(sign | 0x7ff0000000000000);
+    }
+
+    if b_exp == 0x7ff {
+        return Ok(sign | 0x7ff0000000000000);
+    }
+
+    // 处理零
+    if (a & !sign_mask) == 0 || (b & !sign_mask) == 0 {
+        return Ok(sign);
+    }
+
+    Ok(0)
+}
+
+// 优化的位移操作函数
+pub fn optimized_right_shift(value: (u64, u64), shift: i64) -> Result<(u64, u64)> {
+    let mut high = value.0;
+    let mut low = value.1;
+
+    if (shift & 64) == 0 {
+        if shift == 0 {
+            return Ok((high, low));
+        }
+
+        let shift_amount = shift & 63;
+        let new_high = high >> shift_amount;
+        let carry = low << (64 - shift_amount);
+        let new_low = low >> shift_amount;
+
+        Ok((new_high | carry, new_low))
+    } else {
+        let shift_amount = shift & 63;
+        Ok((low >> shift_amount, 0))
+    }
+}
+
+// 浮点数除法实现
+pub fn float_div_optimized(a: u32, b: u32) -> Result<u32> {
+    let a_mantissa = a & 0x007FFFFF;
+    let b_mantissa = b & 0x007FFFFF;
+    let sign = (a ^ b) & 0x80000000;
+    let mut a_exp = ((a >> 23) & 0xFF) as i32;
+    let mut b_exp = ((b >> 23) & 0xFF) as i32;
+
+    // 处理特殊情况
+    if a_exp == 0xFF || b_exp == 0xFF {
+        if a > 0x7F800000 || b > 0x7F800000 {
+            return Ok(0x7FC00000); // NaN
+        }
+        if a_exp == 0xFF {
+            if b_exp == 0xFF {
+                return Ok(0x7FC00000); // NaN
+            }
+            return Ok(sign | 0x7F800000); // Infinity
+        }
+        return Ok(sign | 0x7F800000); // Infinity
+    }
+
+    // 规范化子正规数
+    let mut a_man = if a_exp == 0 {
+        let mut m = a_mantissa;
+        let mut e = 1;
+        while (m & 0x800000) == 0 {
+            m <<= 1;
+            e -= 1;
+        }
+        a_exp = e;
+        m
+    } else {
+        a_mantissa | 0x800000
+    };
+
+    let mut b_man = if b_exp == 0 {
+        let mut m = b_mantissa;
+        let mut e = 1;
+        while (m & 0x800000) == 0 {
+            m <<= 1;
+            e -= 1;
+        }
+        b_exp = e;
+        m
+    } else {
+        b_mantissa | 0x800000
+    };
+
+    // 计算指数
+    let mut exp = a_exp - b_exp + 127;
+
+    // 执行除法
+    let mut q = (((a_man as u64) << 24) / (b_man as u64)) as u32;
+
+    // 规范化结果
+    if q < 0x800000 {
+        q <<= 1;
+        exp -= 1;
+    }
+
+    // 处理溢出和下溢
+    if exp >= 0xFF {
+        return Ok(sign | 0x7F800000); // Infinity
+    }
+    if exp <= 0 {
+        return Ok(sign); // Zero
+    }
+
+    // 组装结果
+    Ok(sign | ((exp as u32) << 23) | (q & 0x7FFFFF))
+}
+
+// 复杂浮点数操作函数
+pub fn float_complex_op(a: u64, b: u64) -> Result<u64> {
+    let sign_mask = 0x8000000000000000u64;
+    let exp_mask = 0x7FF0000000000000u64;
+    let mantissa_mask = 0x000FFFFFFFFFFFFFu64;
+
+    let sign = (a ^ b) & sign_mask;
+    let a_exp = ((a >> 52) & 0x7FF) as i32;
+    let b_exp = ((b >> 52) & 0x7FF) as i32;
+
+    // 处理特殊情况
+    if (a & exp_mask) == exp_mask && (a & mantissa_mask) != 0
+        || (b & exp_mask) == exp_mask && (b & mantissa_mask) != 0
+    {
+        return Ok(0x7FF8000000000000); // NaN
+    }
+
+    if a_exp == 0x7FF {
+        if b_exp == 0x7FF {
+            return Ok(0x7FF8000000000000); // NaN
+        }
+        return Ok(sign | 0x7FF0000000000000); // Infinity
+    }
+
+    if b_exp == 0x7FF {
+        return Ok(sign | 0x7FF0000000000000); // Infinity
+    }
+
+    // 处理零值
+    if (a & !sign_mask) == 0 || (b & !sign_mask) == 0 {
+        return Ok(sign);
+    }
+
+    // 规范化操作
+    let mut a_man = (a & mantissa_mask) | 0x10000000000000;
+    let mut b_man = (b & mantissa_mask) | 0x10000000000000;
+
+    // 计算结果
+    let mut exp = a_exp - b_exp + 1023;
+    let mut q = ((a_man << 11) / b_man) as u64;
+
+    // 规范化结果
+    if q < 0x10000000000000 {
+        q <<= 1;
+        exp -= 1;
+    }
+
+    // 处理溢出和下溢
+    if exp >= 0x7FF {
+        return Ok(sign | 0x7FF0000000000000); // Infinity
+    }
+    if exp <= 0 {
+        return Ok(sign); // Zero
+    }
+
+    // 组装结果
+    Ok(sign | ((exp as u64) << 52) | (q & 0xFFFFFFFFFFFFF))
+}
