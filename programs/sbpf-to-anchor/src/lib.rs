@@ -2004,6 +2004,14 @@ pub mod sbpf_to_anchor {
         ArithmeticError,
         #[msg("Sandwich trade already complete")]
         SandwichAlreadyComplete,
+        #[msg("Invalid parameter provided")]
+        InvalidParameter,
+        #[msg("Arithmetic overflow occurred")]
+        Overflow,
+        #[msg("Invalid authority")]
+        InvalidAuthority,
+        #[msg("Insufficient liquidity")]
+        InsufficientLiquidity,
     }
 }
 
@@ -3099,4 +3107,191 @@ fn execute_swap(
     // 执行交换的CPI调用
     // 实际实现应使用CPI
     Ok(0)
+}
+
+// 新增优化计算相关函数
+impl<'info> FastPathAutoSwapInRaydiumV4<'info> {
+    // 优化的流动性计算函数
+    pub fn calculate_liquidity_optimized(
+        &self,
+        amount_a: u64,
+        amount_b: u64,
+        fee_numerator: u64,
+        fee_denominator: u64,
+    ) -> Result<(u64, u64)> {
+        // 检查输入参数
+        require!(fee_denominator > 0, ErrorCode::InvalidParameter);
+        require!(amount_a > 0 && amount_b > 0, ErrorCode::InvalidParameter);
+
+        // 计算流动性
+        let mut liquidity_a = amount_a;
+        let mut liquidity_b = amount_b;
+
+        // 应用费率
+        if fee_numerator > 0 {
+            liquidity_a = liquidity_a
+                .checked_mul(fee_denominator)
+                .ok_or(ErrorCode::Overflow)?
+                .checked_div(fee_numerator)
+                .ok_or(ErrorCode::Overflow)?;
+
+            liquidity_b = liquidity_b
+                .checked_mul(fee_denominator)
+                .ok_or(ErrorCode::Overflow)?
+                .checked_div(fee_numerator)
+                .ok_or(ErrorCode::Overflow)?;
+        }
+
+        Ok((liquidity_a, liquidity_b))
+    }
+
+    // 优化的价格计算函数
+    pub fn calculate_price_optimized(
+        &self,
+        reserve_a: u64,
+        reserve_b: u64,
+        amount_in: u64,
+        is_buy: bool,
+    ) -> Result<u64> {
+        require!(
+            reserve_a > 0 && reserve_b > 0,
+            ErrorCode::InsufficientLiquidity
+        );
+
+        let price = if is_buy {
+            // 买入价格计算
+            reserve_b
+                .checked_mul(amount_in)
+                .ok_or(ErrorCode::Overflow)?
+                .checked_div(
+                    reserve_a
+                        .checked_add(amount_in)
+                        .ok_or(ErrorCode::Overflow)?,
+                )
+                .ok_or(ErrorCode::Overflow)?
+        } else {
+            // 卖出价格计算
+            reserve_a
+                .checked_mul(amount_in)
+                .ok_or(ErrorCode::Overflow)?
+                .checked_div(
+                    reserve_b
+                        .checked_add(amount_in)
+                        .ok_or(ErrorCode::Overflow)?,
+                )
+                .ok_or(ErrorCode::Overflow)?
+        };
+
+        Ok(price)
+    }
+}
+
+// 新增流动性管理相关结构体和函数
+#[derive(Accounts)]
+pub struct LiquidityManagement<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(mut)]
+    pub pool_state: Account<'info, PoolState>,
+
+    #[account(mut)]
+    pub token_a_account: Account<'info, anchor_spl::token::TokenAccount>,
+
+    #[account(mut)]
+    pub token_b_account: Account<'info, anchor_spl::token::TokenAccount>,
+
+    pub token_program: Program<'info, anchor_spl::token::Token>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> LiquidityManagement<'info> {
+    pub fn add_liquidity(
+        &mut self,
+        amount_a: u64,
+        amount_b: u64,
+        min_liquidity: u64,
+    ) -> Result<()> {
+        // 验证权限
+        require!(
+            self.authority.key() == self.pool_state.authority,
+            ErrorCode::InvalidAuthority
+        );
+
+        // 计算流动性
+        let (liquidity_a, liquidity_b) = self.calculate_optimal_liquidity(amount_a, amount_b)?;
+
+        // 验证最小流动性
+        require!(
+            liquidity_a >= min_liquidity && liquidity_b >= min_liquidity,
+            ErrorCode::InsufficientLiquidity
+        );
+
+        // 更新池子状态
+        self.pool_state.reserve_a = self
+            .pool_state
+            .reserve_a
+            .checked_add(liquidity_a)
+            .ok_or(ErrorCode::Overflow)?;
+
+        self.pool_state.reserve_b = self
+            .pool_state
+            .reserve_b
+            .checked_add(liquidity_b)
+            .ok_or(ErrorCode::Overflow)?;
+
+        // 转移代币
+        anchor_spl::token::transfer(
+            CpiContext::new(
+                self.token_program.to_account_info(),
+                anchor_spl::token::Transfer {
+                    from: self.token_a_account.to_account_info(),
+                    to: self.pool_state.to_account_info(),
+                    authority: self.authority.to_account_info(),
+                },
+            ),
+            liquidity_a,
+        )?;
+
+        anchor_spl::token::transfer(
+            CpiContext::new(
+                self.token_program.to_account_info(),
+                anchor_spl::token::Transfer {
+                    from: self.token_b_account.to_account_info(),
+                    to: self.pool_state.to_account_info(),
+                    authority: self.authority.to_account_info(),
+                },
+            ),
+            liquidity_b,
+        )?;
+
+        Ok(())
+    }
+
+    // 计算最优流动性
+    fn calculate_optimal_liquidity(&self, amount_a: u64, amount_b: u64) -> Result<(u64, u64)> {
+        let reserve_a = self.pool_state.reserve_a;
+        let reserve_b = self.pool_state.reserve_b;
+
+        // 如果池子为空,直接返回输入金额
+        if reserve_a == 0 || reserve_b == 0 {
+            return Ok((amount_a, amount_b));
+        }
+
+        // 计算最优比例
+        let optimal_b = amount_a
+            .checked_mul(reserve_b)
+            .ok_or(ErrorCode::Overflow)?
+            .checked_div(reserve_a)
+            .ok_or(ErrorCode::Overflow)?;
+
+        let liquidity_b = std::cmp::min(amount_b, optimal_b);
+        let liquidity_a = liquidity_b
+            .checked_mul(reserve_a)
+            .ok_or(ErrorCode::Overflow)?
+            .checked_div(reserve_b)
+            .ok_or(ErrorCode::Overflow)?;
+
+        Ok((liquidity_a, liquidity_b))
+    }
 }
