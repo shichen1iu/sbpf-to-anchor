@@ -1100,6 +1100,185 @@ pub mod sbpf_to_anchor {
         pub token_program: Program<'info, anchor_spl::token::Token>,
         pub system_program: Program<'info, System>,
     }
+
+    #[derive(Accounts)]
+    pub struct CreateCreditor<'info> {
+        #[account(mut)]
+        pub payer: Signer<'info>,
+        #[account(
+            init,
+            payer = payer,
+            space = 8 + 56
+        )]
+        pub creditor: Account<'info, Creditor>,
+        pub system_program: Program<'info, System>,
+    }
+
+    #[account]
+    pub struct Creditor {
+        pub data: [u8; 56],
+    }
+
+    pub fn create_creditor(ctx: Context<CreateCreditor>) -> Result<()> {
+        let creditor = &mut ctx.accounts.creditor;
+        creditor.data = [0; 56];
+        Ok(())
+    }
+
+    #[derive(Accounts)]
+    pub struct TipDynamic<'info> {
+        #[account(mut)]
+        pub from: AccountInfo<'info>,
+        #[account(mut)]
+        pub to: AccountInfo<'info>,
+        pub clock: Sysvar<'info, Clock>,
+    }
+
+    pub fn tip_dynamic(ctx: Context<TipDynamic>, amount: u64) -> Result<()> {
+        let from = &ctx.accounts.from;
+        let to = &ctx.accounts.to;
+
+        // 计算动态小费
+        let tip = amount.checked_mul(10000).ok_or(ErrorCode::Overflow)?;
+        let tip = tip.checked_div(10000).ok_or(ErrorCode::Overflow)?;
+
+        // 转账
+        let from_lamports = from.lamports();
+        let to_lamports = to.lamports();
+
+        **from.try_borrow_mut_lamports()? =
+            from_lamports.checked_sub(tip).ok_or(ErrorCode::Overflow)?;
+        **to.try_borrow_mut_lamports()? =
+            to_lamports.checked_add(tip).ok_or(ErrorCode::Overflow)?;
+
+        Ok(())
+    }
+
+    #[derive(Accounts)]
+    pub struct TipStatic<'info> {
+        #[account(mut)]
+        pub from: AccountInfo<'info>,
+        #[account(mut)]
+        pub to: AccountInfo<'info>,
+    }
+
+    pub fn tip_static(ctx: Context<TipStatic>, amount: u64) -> Result<()> {
+        let from = &ctx.accounts.from;
+        let to = &ctx.accounts.to;
+
+        // 转账
+        let from_lamports = from.lamports();
+        let to_lamports = to.lamports();
+
+        **from.try_borrow_mut_lamports()? = from_lamports
+            .checked_sub(amount)
+            .ok_or(ErrorCode::Overflow)?;
+        **to.try_borrow_mut_lamports()? =
+            to_lamports.checked_add(amount).ok_or(ErrorCode::Overflow)?;
+
+        Ok(())
+    }
+
+    #[derive(Accounts)]
+    pub struct TopupTipper<'info> {
+        #[account(mut)]
+        pub payer: Signer<'info>,
+        #[account(mut)]
+        pub tipper: AccountInfo<'info>,
+        pub system_program: Program<'info, System>,
+    }
+
+    pub fn topup_tipper(ctx: Context<TopupTipper>, amount: u64) -> Result<()> {
+        let payer = &ctx.accounts.payer;
+        let tipper = &ctx.accounts.tipper;
+
+        // 转账
+        let payer_lamports = payer.lamports();
+        let tipper_lamports = tipper.lamports();
+
+        **payer.try_borrow_mut_lamports()? = payer_lamports
+            .checked_sub(amount)
+            .ok_or(ErrorCode::Overflow)?;
+        **tipper.try_borrow_mut_lamports()? = tipper_lamports
+            .checked_add(amount)
+            .ok_or(ErrorCode::Overflow)?;
+
+        Ok(())
+    }
+
+    #[derive(Accounts)]
+    pub struct CreateTokenData<'info> {
+        #[account(mut)]
+        pub payer: Signer<'info>,
+        #[account(
+            init,
+            payer = payer,
+            space = 8 + 824
+        )]
+        pub token_data: Account<'info, TokenData>,
+        pub system_program: Program<'info, System>,
+    }
+
+    #[account]
+    pub struct TokenData {
+        pub data: [u8; 824],
+    }
+
+    pub fn create_token_data(ctx: Context<CreateTokenData>) -> Result<()> {
+        let token_data = &mut ctx.accounts.token_data;
+        token_data.data = [0; 824];
+        Ok(())
+    }
+
+    #[derive(Accounts)]
+    pub struct CreateSandwichTracker<'info> {
+        #[account(mut)]
+        pub payer: Signer<'info>,
+        #[account(
+            init,
+            payer = payer,
+            space = 8 + 24
+        )]
+        pub tracker: Account<'info, SandwichTracker>,
+        pub system_program: Program<'info, System>,
+    }
+
+    #[account]
+    pub struct SandwichTracker {
+        pub data: [u8; 24],
+    }
+
+    pub fn create_sandwich_tracker(ctx: Context<CreateSandwichTracker>) -> Result<()> {
+        let tracker = &mut ctx.accounts.tracker;
+        tracker.data = [0; 24];
+        Ok(())
+    }
+
+    #[derive(Accounts)]
+    pub struct ExtendSandwichTracker<'info> {
+        #[account(mut)]
+        pub tracker: Account<'info, SandwichTracker>,
+    }
+
+    pub fn extend_sandwich_tracker(ctx: Context<ExtendSandwichTracker>) -> Result<()> {
+        let tracker = &mut ctx.accounts.tracker;
+        // 扩展追踪器数据
+        Ok(())
+    }
+
+    #[derive(Accounts)]
+    pub struct WriteSandwichTrackerIdentities<'info> {
+        #[account(mut)]
+        pub tracker: Account<'info, SandwichTracker>,
+    }
+
+    pub fn write_sandwich_tracker_identities(
+        ctx: Context<WriteSandwichTrackerIdentities>,
+    ) -> Result<()> {
+        let tracker = &mut ctx.accounts.tracker;
+        // 写入身份数据
+        Ok(())
+    }
 }
 
 // Internal implementation functions
