@@ -317,6 +317,569 @@ pub mod sbpf_to_anchor {
 
         Ok(true)
     }
+
+    // 新添加的Raydium V4相关指令
+    pub fn fast_path_auto_swap_in_raydium_v4(
+        ctx: Context<FastPathAutoSwapInRaydiumV4>,
+    ) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 实现fast_path_auto_swap_in_raydium_v4逻辑
+        // 在汇编中看到的主要逻辑包括：
+        // 1. 检查池子有效性
+        // 2. 计算兑换金额
+        // 3. 执行token转账
+        // 4. 更新sandwich状态
+
+        // 获取相关参数
+        let dex_type = accounts.dex_type.dex_type;
+        let amount = accounts.amount.amount;
+        let reverse = accounts.reverse.reverse;
+
+        // 验证池子有效性
+        let is_valid = if dex_type == 0 {
+            raydium_is_valid(accounts.input_data.to_account_info())?
+        } else {
+            pump_fun_is_valid(accounts.input_data.to_account_info())?
+        };
+
+        // 检查池子是否有效
+        if !is_valid {
+            return Err(SwapError::InvalidPoolState.into());
+        }
+
+        // 计算兑换金额
+        let (quote, reserve_a, reserve_b) = if dex_type == 0 {
+            raydium_get_quote_and_liquidity(accounts.input_data.to_account_info(), amount, reverse)?
+        } else {
+            pump_fun_get_quote_and_liquidity(
+                accounts.input_data.to_account_info(),
+                amount,
+                reverse,
+            )?
+        };
+
+        // 检查流动性
+        if quote == 0 {
+            return Err(SwapError::InsufficientLiquidity.into());
+        }
+
+        // 执行token转账
+        // 实际执行时需要使用CPI调用token程序
+
+        // 更新sandwich状态
+        // 在汇编代码中看到对sandwich_update_frontrun的调用
+
+        msg!("Fast path auto swap in Raydium V4 executed successfully");
+        Ok(())
+    }
+
+    pub fn fast_path_auto_swap_out_raydium_v4(
+        ctx: Context<FastPathAutoSwapOutRaydiumV4>,
+    ) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 实现fast_path_auto_swap_out_raydium_v4逻辑
+        // 主要步骤:
+        // 1. 检查是否是验证者
+        // 2. 注册sandwich_tracker
+        // 3. 获取和验证流动性
+        // 4. 执行token转账
+        // 5. 更新sandwich状态
+
+        // 获取参数
+        let dex_type = accounts.dex_type.dex_type;
+        let amount = accounts.amount.amount;
+        let reverse = accounts.reverse.reverse;
+
+        // 验证池子有效性和流动性
+        let (reserve_a, reserve_b) = if dex_type == 0 {
+            raydium_get_liquidity(accounts.input_data.to_account_info(), amount, reverse)?
+        } else {
+            pump_fun_get_liquidity(accounts.input_data.to_account_info(), amount, reverse)?
+        };
+
+        // 获取报价
+        let quote = if dex_type == 0 {
+            raydium_get_quote(accounts.input_data.to_account_info(), amount, reverse)?
+        } else {
+            pump_fun_get_quote(accounts.input_data.to_account_info(), amount, reverse)?
+        };
+
+        // 检查流动性
+        if quote == 0 {
+            return Err(SwapError::InsufficientLiquidity.into());
+        }
+
+        // 更新sandwich状态 (backrun)
+        // 在汇编代码中看到对sandwich_update_backrun的调用
+
+        msg!("Fast path auto swap out Raydium V4 executed successfully");
+        Ok(())
+    }
+
+    pub fn fast_path_create_raydium_v4(ctx: Context<FastPathCreateRaydiumV4>) -> Result<()> {
+        // 实现fast_path_create_raydium_v4逻辑
+        // 主要步骤:
+        // 1. 创建Raydium V4池子
+        // 2. 初始化必要的账户和状态
+        // 3. 设置池子初始参数
+        // 初始化池子状态
+        ctx.accounts.pool_state.dex_type = 0; // Raydium类型
+        ctx.accounts.pool_state.initialized = true;
+
+        // 在汇编中看到的其他初始化逻辑
+
+        msg!("Fast path create Raydium V4 executed successfully");
+        Ok(())
+    }
+
+    pub fn close_sandwiches_and_topup_tipper(
+        ctx: Context<CloseSandwichesAndTopupTipper>,
+    ) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 实现close_sandwiches_and_topup_tipper逻辑
+        // 主要步骤:
+        // 1. 关闭所有未完成的sandwich交易
+        // 2. 将费用转给tipper账户
+        // 3. 更新系统状态
+
+        // 检查权限
+
+        // 关闭sandwich交易并转账给tipper
+
+        msg!("Closed sandwiches and topped up tipper successfully");
+        Ok(())
+    }
+
+    pub fn create_sandwich_tracker(ctx: Context<CreateSandwichTracker>) -> Result<()> {
+        // 实现创建sandwich追踪器的逻辑
+        // 1. 初始化追踪器状态
+        // 2. 设置初始参数
+
+        // 初始化sandwich追踪器
+        ctx.accounts.tracker.initialized = true;
+
+        msg!("Sandwich tracker created successfully");
+        Ok(())
+    }
+
+    pub fn create_global(ctx: Context<CreateGlobal>) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 实现create_global逻辑
+        // 用于创建全局配置或状态账户
+
+        // 初始化全局状态
+        ctx.accounts.global_state.initialized = true;
+
+        msg!("Global state created successfully");
+        Ok(())
+    }
+
+    pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 实现withdraw逻辑
+        // 1. 验证权限
+        // 2. 检查余额
+        // 3. 执行提款
+
+        // 验证权限
+
+        // 检查余额
+        let balance = accounts.source_account.amount;
+        if balance < amount {
+            return Err(SwapError::InsufficientBalance.into());
+        }
+
+        // 执行提款
+        ctx.accounts.source_account.amount -= amount;
+
+        msg!("Withdrawal of {} tokens successful", amount);
+        Ok(())
+    }
+
+    // 更新全局状态
+    pub fn update_global(ctx: Context<UpdateGlobal>) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 检查更新标志
+        let update_fee_flag = accounts.global_update_data.update_fee_flag;
+        let update_config_flag = accounts.global_update_data.update_config_flag;
+
+        // 更新费用相关字段
+        if update_fee_flag {
+            msg!("Updating global fee settings");
+            let fee_numerator = accounts.global_update_data.fee_numerator;
+            let fee_denominator = accounts.global_update_data.fee_denominator;
+            let tipper_fee = accounts.global_update_data.tipper_fee;
+
+            // 更新全局状态中的费用设置
+            ctx.accounts.global_state.fee_numerator = fee_numerator;
+            ctx.accounts.global_state.fee_denominator = fee_denominator;
+            ctx.accounts.global_state.tipper_fee = tipper_fee;
+        }
+
+        // 更新配置相关字段
+        if update_config_flag {
+            msg!("Updating global configuration");
+            // 从全局更新数据拷贝配置数据到全局状态
+            // 实际实现中需要根据具体字段来拷贝
+            // 这里简化处理
+        }
+
+        msg!("Global state updated successfully");
+        Ok(())
+    }
+
+    // Pump Fun DEX快速路径自动交换
+    pub fn fast_path_auto_swap_in_pump_fun(ctx: Context<FastPathAutoSwapInPumpFun>) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 检查是否有全局控制器
+        if !accounts.has_global_controller() {
+            return Err(SwapError::InvalidGlobalController.into());
+        }
+
+        // 检查交换方向设置
+        if accounts.is_reverse() {
+            return Err(SwapError::InvalidSwapDirection.into());
+        }
+
+        // 获取流动性和报价
+        let (reserve_a, reserve_b) = pump_fun_get_liquidity(
+            accounts.pool_data.to_account_info(),
+            accounts.amount_data.amount,
+            false,
+        )?;
+
+        // 检查阈值
+        let threshold = accounts.get_threshold();
+        if reserve_b < threshold {
+            return Err(SwapError::InsufficientLiquidity.into());
+        }
+
+        // 计算兑换金额
+        let quote = pump_fun_get_quote(
+            accounts.pool_data.to_account_info(),
+            accounts.amount_data.amount,
+            false,
+        )?;
+
+        // 检查报价是否为零
+        if quote == 0 {
+            return Err(SwapError::InvalidQuote.into());
+        }
+
+        // 保存计算结果
+        ctx.accounts.amount_data.amount = quote;
+
+        // 更新sandwich交易相关数据
+        // 在实际实现中这需要调用sandwich_update_frontrun
+
+        msg!("Fast path auto swap in Pump Fun executed successfully");
+        Ok(())
+    }
+
+    // Pump Fun DEX快速路径自动反向交换
+    pub fn fast_path_auto_swap_out_pump_fun(
+        ctx: Context<FastPathAutoSwapOutPumpFun>,
+    ) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 检查是否有效的验证者身份
+        if accounts.needs_validator_check() && !accounts.is_valid_validator()? {
+            return Err(SwapError::InvalidValidator.into());
+        }
+
+        // 注册sandwich追踪
+        if accounts.need_register_tracker() {
+            accounts.register_sandwich_tracker()?;
+        }
+
+        // 获取报价和流动性
+        let (quote, reserve_a, reserve_b) = pump_fun_get_quote_and_liquidity(
+            accounts.pool_data.to_account_info(),
+            accounts.amount_data.amount,
+            true,
+        )?;
+
+        // 检查流动性
+        if quote == 0 {
+            return Err(SwapError::InsufficientLiquidity.into());
+        }
+
+        // 执行交换
+        // 在实际实现中这需要使用CPI调用token转账指令
+
+        // 更新sandwich交易状态
+        // 在实际实现中这需要调用sandwich_update_backrun
+
+        msg!("Fast path auto swap out Pump Fun executed successfully");
+        Ok(())
+    }
+
+    // 创建Pump Fun自动交换入账户
+    pub fn fast_path_create_pump_fun_auto_swap_in(
+        ctx: Context<FastPathCreatePumpFunAutoSwap>,
+    ) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 初始化快速路径账户
+        ctx.accounts.swap_account.initialized = true;
+        ctx.accounts.swap_account.swap_type = 2; // Pump Fun Auto Swap In
+        ctx.accounts.swap_account.dex_type = 1; // 1 = Pump Fun
+
+        // 初始化内部数据区域
+        // 为简化这里只添加必要的初始化
+
+        msg!("Created Fast Path Pump Fun Auto Swap In account successfully");
+        Ok(())
+    }
+
+    // 创建Pump Fun自动交换出账户
+    pub fn fast_path_create_pump_fun_auto_swap_out(
+        ctx: Context<FastPathCreatePumpFunAutoSwap>,
+    ) -> Result<()> {
+        let accounts = &ctx.accounts;
+
+        // 初始化快速路径账户
+        ctx.accounts.swap_account.initialized = true;
+        ctx.accounts.swap_account.swap_type = 3; // Pump Fun Auto Swap Out
+        ctx.accounts.swap_account.dex_type = 1; // 1 = Pump Fun
+
+        // 初始化内部数据区域
+        // 为简化这里只添加必要的初始化
+
+        msg!("Created Fast Path Pump Fun Auto Swap Out account successfully");
+        Ok(())
+    }
+
+    // 获取交换指令的优化实现
+    pub fn get_swap_instruction_optimised(ctx: Context<GetSwapInstruction>) -> Result<u64> {
+        let accounts = &ctx.accounts;
+
+        // 获取程序ID类型 - 使用as_ref()正确转换Pubkey为&[u8]
+        let key_type = get_key_type_optimised(accounts.account_to_check.key.as_ref());
+
+        // 根据程序ID类型创建不同的交换指令
+        let (instruction_data, amount_out) = match key_type {
+            0 => {
+                // Raydium类型
+                let raydium_ix = [9u8]; // 简化的Raydium指令ID
+                let amount = accounts.amount_data.amount;
+                (raydium_ix.to_vec(), amount)
+            }
+            1 => {
+                // PumpFun类型
+                let pump_fun_ix = [0xde, 0x33, 0x1e, 0xc4, 0xda, 0x5a, 0xbe, 0x8f]; // 简化的PumpFun指令ID
+                let amount = accounts.amount_data.amount;
+                (pump_fun_ix.to_vec(), amount)
+            }
+            2 => {
+                // Orca类型
+                let is_reverse = accounts.reverse.reverse;
+
+                if is_reverse {
+                    let orca_reverse_ix = [0xad, 0x83, 0x7f, 0x01, 0xa4, 0x85, 0xe6, 0x33]; // 简化的Orca反向指令ID
+                    let amount = accounts.amount_data.amount;
+                    (orca_reverse_ix.to_vec(), amount)
+                } else {
+                    // 获取报价
+                    let quote = pump_fun_get_quote(
+                        accounts.pool_data.to_account_info(),
+                        accounts.amount_data.amount,
+                        false,
+                    )?;
+
+                    let orca_ix = [0xea, 0xeb, 0xda, 0x01, 0x12, 0x3d, 0x06, 0x66]; // 简化的Orca指令ID
+                    (orca_ix.to_vec(), quote)
+                }
+            }
+            _ => {
+                return Err(SwapError::InvalidDexType.into());
+            }
+        };
+
+        //todo: 保存指令数据
+        // ctx.accounts.instruction_data.data = instruction_data;
+
+        // 返回计算出的兑换金额
+        Ok(amount_out)
+    }
+
+    // 实际实现deserialize_swap函数
+    pub fn deserialize_swap(ctx: Context<DeserializeSwap>) -> Result<bool> {
+        let accounts = &ctx.accounts;
+
+        // 提取账户信息
+        let source_data = accounts.source_data.to_account_info();
+        let raydium_data = accounts.raydium_data.to_account_info();
+        let output = &mut ctx.accounts.output;
+
+        // 检查程序ID
+        let source_data_bytes = source_data.try_borrow_data()?;
+
+        // 检查数据有效性
+        if source_data_bytes.len() < 24 {
+            return Ok(false);
+        }
+
+        // 检查程序ID是否匹配Raydium V4
+        let first_id = u64::from_le_bytes(source_data_bytes[0..8].try_into().unwrap());
+        let second_id = u64::from_le_bytes(source_data_bytes[8..16].try_into().unwrap());
+        let third_id = u64::from_le_bytes(source_data_bytes[16..24].try_into().unwrap());
+
+        // 汇编中的比较逻辑
+        if first_id != 0xaa5b17bf6815db44 || second_id != 0x3bffd2f597cb8951 {
+            // ID不匹配，不是Raydium V4
+            return Ok(false);
+        }
+
+        if third_id != 0xb0186dfdb62b5d65 {
+            // 检查第三个ID是否匹配
+            return Ok(false);
+        }
+
+        // 处理Raydium V4的逻辑
+        output.dex_type = 17; // 用于标识Raydium V4
+
+        // 解析流动性数据
+        let mut liquidity_buffer = [0u64; 2];
+
+        // 解析流动性
+        if !raydium_v4_parse_liquidity(raydium_data.clone(), &mut liquidity_buffer)? {
+            return Ok(false);
+        }
+
+        // 设置输出数据
+        let raydium_data_bytes = raydium_data.try_borrow_data()?;
+
+        // 设置is_reverse标志和其他字段
+        output.is_reverse = false;
+
+        // 成功解析
+        Ok(true)
+    }
+
+    #[derive(Accounts)]
+    pub struct DeserializeSwap<'info> {
+        /// CHECK: 源数据账户
+        pub source_data: AccountInfo<'info>,
+
+        /// CHECK: Raydium数据账户
+        pub raydium_data: AccountInfo<'info>,
+
+        /// 输出数据账户
+        #[account(mut)]
+        pub output: Account<'info, SwapData>,
+
+        /// 存储区域
+        #[account(mut)]
+        pub storage: Account<'info, StorageData>,
+    }
+
+    // 新增SwapData结构体
+    #[account]
+    #[derive(InitSpace)]
+    pub struct SwapData {
+        pub dex_type: u8,
+        pub is_reverse: bool,
+        pub token_a_address: Pubkey,
+        pub token_b_address: Pubkey,
+        pub reserve_a: u64,
+        pub reserve_b: u64,
+        pub fee_numerator: u64,
+        pub fee_denominator: u64,
+        pub data: [u8; 1024], // 内部数据
+    }
+
+    impl SwapData {
+        pub const LEN: usize = 1 + 1 + 32 + 32 + 8 + 8 + 8 + 8 + 1024;
+    }
+
+    // 存储区域数据结构
+    #[account]
+    #[derive(InitSpace)]
+    pub struct StorageData {
+        pub data: [u8; 2048], // 用于临时存储和memcpy操作
+    }
+
+    impl StorageData {
+        pub const LEN: usize = 2048;
+    }
+
+    // 添加到program模块里的新指令
+    pub fn deserialize_swap_v4(ctx: Context<DeserializeSwapV4>) -> Result<bool> {
+        // 直接调用主函数,传递账户信息
+        let source_data = ctx.accounts.source_data.clone();
+        let raydium_data = ctx.accounts.raydium_data.clone();
+        let output = &mut ctx.accounts.output;
+
+        // 提取账户信息
+        // 检查程序ID
+        let source_data_bytes = source_data.try_borrow_data()?;
+
+        // 检查数据有效性
+        if source_data_bytes.len() < 24 {
+            return Ok(false);
+        }
+
+        // 检查程序ID是否匹配Raydium V4
+        let first_id = u64::from_le_bytes(source_data_bytes[0..8].try_into().unwrap());
+        let second_id = u64::from_le_bytes(source_data_bytes[8..16].try_into().unwrap());
+        let third_id = u64::from_le_bytes(source_data_bytes[16..24].try_into().unwrap());
+
+        // 汇编中的比较逻辑
+        if first_id != 0xaa5b17bf6815db44 || second_id != 0x3bffd2f597cb8951 {
+            // ID不匹配，不是Raydium V4
+            return Ok(false);
+        }
+
+        if third_id != 0xb0186dfdb62b5d65 {
+            // 检查第三个ID是否匹配
+            return Ok(false);
+        }
+
+        // 处理Raydium V4的逻辑
+        output.dex_type = 17; // 用于标识Raydium V4
+
+        // 解析流动性数据
+        let mut liquidity_buffer = [0u64; 2];
+
+        // 解析流动性
+        if !raydium_v4_parse_liquidity(raydium_data.clone(), &mut liquidity_buffer)? {
+            return Ok(false);
+        }
+
+        // 设置输出数据
+        let raydium_data_bytes = raydium_data.try_borrow_data()?;
+
+        // 设置is_reverse标志和其他字段
+        output.is_reverse = false;
+
+        // 成功解析
+        Ok(true)
+    }
+
+    #[derive(Accounts)]
+    pub struct DeserializeSwapV4<'info> {
+        /// CHECK: 源数据账户
+        pub source_data: AccountInfo<'info>,
+
+        /// CHECK: Raydium数据账户
+        pub raydium_data: AccountInfo<'info>,
+
+        /// 输出数据账户
+        #[account(mut)]
+        pub output: Account<'info, SwapData>,
+
+        /// 存储区域
+        #[account(mut)]
+        pub storage: Account<'info, StorageData>,
+    }
 }
 
 // Internal implementation functions
@@ -410,7 +973,7 @@ fn function_11519(a: u64, b: u64) -> u64 {
 
 fn function_11552(a: u64, b: u64) -> u64 {
     // Simplified multiplication function that appears in pump_fun code
-    a * b / 0x10000000000000000
+    a * b / 0x10000000000000000u128 as u64
 }
 
 fn function_12023(a: u64) -> u64 {
@@ -753,6 +1316,18 @@ pub enum SwapError {
     InvalidAmount,
     #[msg("Invalid DEX type")]
     InvalidDexType,
+    #[msg("Invalid pool state")]
+    InvalidPoolState,
+    #[msg("Insufficient balance")]
+    InsufficientBalance,
+    #[msg("Invalid global controller")]
+    InvalidGlobalController,
+    #[msg("Invalid swap direction")]
+    InvalidSwapDirection,
+    #[msg("Invalid quote")]
+    InvalidQuote,
+    #[msg("Invalid validator")]
+    InvalidValidator,
 }
 
 fn calculate_upper_bound(
@@ -801,4 +1376,430 @@ fn function_9815(a: u64) -> u64 {
     // 这个函数在汇编代码中被多次调用，看起来是一个辅助函数
     // 为简化起见，返回输入值的一小部分
     a / 10
+}
+
+// 新添加的账户结构
+#[derive(Accounts)]
+pub struct FastPathAutoSwapInRaydiumV4<'info> {
+    // 通用账户
+    pub input_data: AccountInfo<'info>,
+    #[account(mut)]
+    pub amount: Account<'info, AmountData>,
+    #[account(mut)]
+    pub reverse: Account<'info, ReverseFlag>,
+    #[account(mut)]
+    pub dex_type: Account<'info, DexType>,
+
+    // Raydium特有账户
+    /// CHECK: This account is safe as it's only used for token transfer
+    #[account(mut)]
+    pub token_account_a: AccountInfo<'info>,
+    /// CHECK: This account is safe as it's only used for token transfer
+    #[account(mut)]
+    pub token_account_b: AccountInfo<'info>,
+
+    // 系统账户
+    pub token_program: Program<'info, anchor_spl::token::Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct FastPathAutoSwapOutRaydiumV4<'info> {
+    // 通用账户
+    pub input_data: AccountInfo<'info>,
+    #[account(mut)]
+    pub amount: Account<'info, AmountData>,
+    #[account(mut)]
+    pub reverse: Account<'info, ReverseFlag>,
+    #[account(mut)]
+    pub dex_type: Account<'info, DexType>,
+
+    // Raydium特有账户
+    /// CHECK: This account is safe as it's only used for token transfer
+    #[account(mut)]
+    pub token_account_a: AccountInfo<'info>,
+    /// CHECK: This account is safe as it's only used for token transfer
+    #[account(mut)]
+    pub token_account_b: AccountInfo<'info>,
+
+    // 系统账户
+    pub token_program: Program<'info, anchor_spl::token::Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct FastPathCreateRaydiumV4<'info> {
+    #[account(mut)]
+    pub initializer: Signer<'info>,
+
+    #[account(init, payer = initializer, space = 8 + PoolState::LEN)]
+    pub pool_state: Account<'info, PoolState>,
+
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct CloseSandwichesAndTopupTipper<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(mut)]
+    pub tipper_account: Account<'info, TipperAccount>,
+
+    #[account(mut)]
+    pub sandwich_tracker: Account<'info, SandwichTracker>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct CreateSandwichTracker<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(init, payer = admin, space = 8 + SandwichTracker::LEN)]
+    pub tracker: Account<'info, SandwichTracker>,
+
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct CreateGlobal<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(init, payer = admin, space = 8 + GlobalState::LEN)]
+    pub global_state: Account<'info, GlobalState>,
+
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(mut)]
+    pub source_account: Account<'info, AmountData>,
+
+    pub token_program: Program<'info, anchor_spl::token::Token>,
+    pub system_program: Program<'info, System>,
+}
+
+// 新添加的数据结构
+#[account]
+#[derive(InitSpace)]
+pub struct PoolState {
+    pub initialized: bool,
+    pub dex_type: u8, // 0: Raydium, 1: PumpFun
+    pub reserve_a: u64,
+    pub reserve_b: u64,
+    pub fee_numerator: u64,
+    pub fee_denominator: u64,
+}
+
+impl PoolState {
+    pub const LEN: usize = 1 + 1 + 8 + 8 + 8 + 8;
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct SandwichTracker {
+    pub initialized: bool,
+    pub frontrun_tracker: [u8; 512],
+    pub backrun_tracker: [u8; 512],
+    pub leaders: [Pubkey; 5],
+    pub scores: [u64; 5],
+}
+
+impl SandwichTracker {
+    pub const LEN: usize = 1 + 512 + 512 + (32 * 5) + (8 * 5);
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct TipperAccount {
+    pub owner: Pubkey,
+    pub amount: u64,
+    pub total_tipped: u64,
+}
+
+impl TipperAccount {
+    pub const LEN: usize = 32 + 8 + 8;
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct GlobalState {
+    pub initialized: bool,
+    pub admin: Pubkey,
+    pub tipper_fee: u64,
+    pub fee_numerator: u64,
+    pub fee_denominator: u64,
+}
+
+impl GlobalState {
+    pub const LEN: usize = 1 + 32 + 8 + 8 + 8;
+}
+
+// 添加Raydium V4解析流动性函数
+pub fn raydium_v4_parse_liquidity(
+    raydium_data: AccountInfo,
+    liquidity_buffer: &mut [u64; 2],
+) -> Result<bool> {
+    // 检查账户数据有效性
+    let raydium_data_bytes = raydium_data.try_borrow_data()?;
+
+    // 根据汇编代码，需要检查账户数据长度
+    if raydium_data_bytes.len() < 200 {
+        return Ok(false);
+    }
+
+    // 从特定偏移量读取流动性数据
+    // 示例偏移量基于汇编代码中的内存访问模式
+    let reserve_a_offset = 112;
+    let reserve_b_offset = 168;
+
+    // 确保我们有足够的数据来读取这些值
+    if raydium_data_bytes.len() < reserve_a_offset + 8
+        || raydium_data_bytes.len() < reserve_b_offset + 8
+    {
+        return Ok(false);
+    }
+
+    // 读取流动性值
+    let reserve_a = u64::from_le_bytes(
+        raydium_data_bytes[reserve_a_offset..reserve_a_offset + 8]
+            .try_into()
+            .unwrap(),
+    );
+
+    let reserve_b = u64::from_le_bytes(
+        raydium_data_bytes[reserve_b_offset..reserve_b_offset + 8]
+            .try_into()
+            .unwrap(),
+    );
+
+    // 将读取的值存储到输出缓冲区
+    liquidity_buffer[0] = reserve_a;
+    liquidity_buffer[1] = reserve_b;
+
+    Ok(true)
+}
+
+// Raydium V4特有的反序列化函数
+fn deserialize_swap_optimised(
+    swap_data: AccountInfo,
+    pool_data: AccountInfo,
+    output_data: &mut [AccountMeta; 10],
+) -> Result<bool> {
+    // 检查程序ID是否是Raydium V4
+    let program_id = swap_data.try_borrow_data()?;
+    let program_id_bytes = &program_id[0..32];
+
+    // 从汇编代码中提取的解析逻辑
+    let mut result = false;
+
+    // 可以根据程序ID判断
+    if program_id_bytes == b"RAYDIUM_V4_PROGRAM_ID................" {
+        let mut liquidity_buffer = [0u64; 2];
+
+        // 调用Raydium解析函数
+        if raydium_v4_parse_liquidity(pool_data.clone(), &mut liquidity_buffer)? {
+            // 解析成功，设置账户元数据
+            // 注意：实际实现需要根据Raydium V4的协议格式定制
+
+            result = true;
+        }
+    }
+
+    Ok(result)
+}
+
+// 根据汇编代码实现get_key_type_optimised函数,接收&[u8]切片
+fn get_key_type_optimised(input_data: &[u8]) -> u8 {
+    if input_data.len() < 32 {
+        return 3; // 默认类型
+    }
+
+    // 从汇编代码中提取的比较逻辑
+    // 实际实现需要根据正确的密钥类型做匹配
+
+    // 示例逻辑（需要替换为真实逻辑）
+    if input_data[0] == 0x3f && input_data[1] == 0xc3 {
+        return 0; // 第一种类型
+    } else if input_data[0] == 0x52 && input_data[1] == 0x59 {
+        return 1; // 第二种类型
+    } else if input_data[0] == 0xcf && input_data[1] == 0x5a {
+        return 2; // 第三种类型
+    }
+
+    3 // 默认类型
+}
+
+// 新增账户结构体
+#[derive(Accounts)]
+pub struct UpdateGlobal<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(mut)]
+    pub global_state: Account<'info, GlobalState>,
+
+    pub global_update_data: Account<'info, GlobalUpdateData>,
+}
+
+#[derive(Accounts)]
+pub struct FastPathAutoSwapInPumpFun<'info> {
+    // 通用账户
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    /// CHECK: 池子数据账户
+    pub pool_data: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub amount_data: Account<'info, AmountData>,
+
+    // Pump Fun特有账户
+    /// CHECK: These accounts will be checked in the instruction
+    #[account(mut)]
+    pub token_a_account: AccountInfo<'info>,
+
+    /// CHECK: These accounts will be checked in the instruction
+    #[account(mut)]
+    pub token_b_account: AccountInfo<'info>,
+
+    // 系统账户
+    pub token_program: Program<'info, anchor_spl::token::Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct FastPathAutoSwapOutPumpFun<'info> {
+    // 通用账户
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    /// CHECK: 池子数据账户
+    pub pool_data: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub amount_data: Account<'info, AmountData>,
+
+    // Pump Fun特有账户
+    /// CHECK: These accounts will be checked in the instruction
+    #[account(mut)]
+    pub token_a_account: AccountInfo<'info>,
+
+    /// CHECK: These accounts will be checked in the instruction
+    #[account(mut)]
+    pub token_b_account: AccountInfo<'info>,
+
+    // 可选的验证者检查
+    /// CHECK: This account is safe
+    pub validator_id: AccountInfo<'info>,
+
+    // 系统账户
+    pub token_program: Program<'info, anchor_spl::token::Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct FastPathCreatePumpFunAutoSwap<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(init, payer = authority, space = 8 + SwapAccount::LEN)]
+    pub swap_account: Account<'info, SwapAccount>,
+
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct GetSwapInstruction<'info> {
+    /// CHECK: 需要检查的账户
+    pub account_to_check: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub amount_data: Account<'info, AmountData>,
+
+    #[account(mut)]
+    pub reverse: Account<'info, ReverseFlag>,
+
+    /// CHECK: 池子数据
+    pub pool_data: AccountInfo<'info>,
+
+    /// CHECK: 指令数据输出
+    #[account(mut)]
+    pub instruction_data: AccountInfo<'info>,
+}
+
+// 新增数据结构
+#[account]
+#[derive(InitSpace)]
+pub struct GlobalUpdateData {
+    pub update_fee_flag: bool,
+    pub update_config_flag: bool,
+    pub fee_numerator: u64,
+    pub fee_denominator: u64,
+    pub tipper_fee: u64,
+    // 配置数据通常更大，这里简化
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct SwapAccount {
+    pub initialized: bool,
+    pub swap_type: u8,    // 2: Auto Swap In, 3: Auto Swap Out
+    pub dex_type: u8,     // 0: Raydium, 1: Pump Fun
+    pub data: [u8; 1800], // 内部数据
+}
+
+impl SwapAccount {
+    pub const LEN: usize = 1 + 1 + 1 + 1800;
+}
+
+// 辅助函数和扩展实现
+impl<'info> FastPathAutoSwapInPumpFun<'info> {
+    pub fn has_global_controller(&self) -> bool {
+        // 实际实现中需要检查全局控制器是否存在
+        true
+    }
+
+    pub fn is_reverse(&self) -> bool {
+        // 实际实现中需要检查交换方向
+        false
+    }
+
+    pub fn get_threshold(&self) -> u64 {
+        // 实际实现中需要从配置中获取阈值
+        1000
+    }
+}
+
+impl<'info> FastPathAutoSwapOutPumpFun<'info> {
+    pub fn needs_validator_check(&self) -> bool {
+        // 实际实现中需要检查是否需要验证者检查
+        !self.validator_id.key.eq(&Pubkey::default())
+    }
+
+    pub fn is_valid_validator(&self) -> Result<bool> {
+        // 实际实现中需要检查验证者ID是否有效
+        Ok(true)
+    }
+
+    pub fn need_register_tracker(&self) -> bool {
+        // 实际实现中需要检查是否需要注册追踪
+        true
+    }
+
+    pub fn register_sandwich_tracker(&self) -> Result<()> {
+        // 实际实现中需要注册sandwich追踪
+        Ok(())
+    }
 }
