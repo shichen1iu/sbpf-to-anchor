@@ -3295,3 +3295,98 @@ impl<'info> LiquidityManagement<'info> {
         Ok((liquidity_a, liquidity_b))
     }
 }
+
+// 优化的位移操作函数
+pub fn optimized_bit_shift(value: u64, shift: i64) -> Result<(u64, u64)> {
+    let mut r2 = value;
+    let mut r3 = value;
+    let r4 = shift;
+
+    if (r4 & 64) == 0 {
+        if r4 == 0 {
+            return Ok((r2, r3));
+        }
+        let shift_amount = r4 & 63;
+        r2 = r2 >> shift_amount;
+        let neg_shift = (-r4) & 63;
+        let r0 = r3 << neg_shift;
+        r2 |= r0;
+        r3 >>= shift_amount;
+    } else {
+        let shift_amount = r4 & 63;
+        r3 >>= shift_amount;
+        r2 = r3;
+        r3 = 0;
+    }
+
+    Ok((r2, r3))
+}
+
+// 浮点数除法实现
+pub fn float_div(a: f32, b: f32) -> Result<f32> {
+    let a_bits = a.to_bits();
+    let b_bits = b.to_bits();
+
+    let a_exp = ((a_bits >> 23) & 0xFF) as i32;
+    let b_exp = ((b_bits >> 23) & 0xFF) as i32;
+    let a_man = a_bits & 0x7FFFFF;
+    let b_man = b_bits & 0x7FFFFF;
+    let sign = (a_bits ^ b_bits) & 0x80000000;
+
+    // 处理特殊情况
+    if a_exp == 0xFF || b_exp == 0xFF {
+        if a_bits > 0x7F800000 || b_bits > 0x7F800000 {
+            return Ok(f32::from_bits(0x7FC00000)); // NaN
+        }
+        if a_exp == 0xFF {
+            if b_exp == 0xFF {
+                return Ok(f32::from_bits(0x7FC00000)); // NaN
+            }
+            return Ok(f32::from_bits(sign | 0x7F800000)); // Infinity
+        }
+        return Ok(f32::from_bits(sign | 0x7F800000)); // Infinity
+    }
+
+    // 规范化操作
+    let mut a_man = if a_exp == 0 {
+        normalize_subnormal(a_man)
+    } else {
+        a_man | 0x800000
+    };
+
+    let mut b_man = if b_exp == 0 {
+        normalize_subnormal(b_man)
+    } else {
+        b_man | 0x800000
+    };
+
+    let mut exp = a_exp - b_exp + 127;
+
+    // 执行除法
+    let mut q = (((a_man as u64) << 24) / (b_man as u64)) as u32;
+
+    // 舍入和规范化
+    if q < 0x800000 {
+        q <<= 1;
+        exp -= 1;
+    }
+
+    if exp >= 0xFF {
+        return Ok(f32::from_bits(sign | 0x7F800000)); // Infinity
+    }
+    if exp <= 0 {
+        return Ok(f32::from_bits(sign)); // Zero
+    }
+
+    Ok(f32::from_bits(sign | ((exp as u32) << 23) | (q & 0x7FFFFF)))
+}
+
+fn normalize_subnormal(man: u32) -> u32 {
+    let mut m = man;
+    let mut e = 1;
+    while (m & 0x800000) == 0 {
+        m <<= 1;
+        e -= 1;
+    }
+    m
+}
