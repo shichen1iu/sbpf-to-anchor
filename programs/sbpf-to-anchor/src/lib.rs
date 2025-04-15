@@ -1279,6 +1279,638 @@ pub mod sbpf_to_anchor {
         // 写入身份数据
         Ok(())
     }
+
+    // Token相关操作
+    pub fn token_initialize_immutable_owner(
+        ctx: Context<TokenInitializeImmutableOwner>,
+    ) -> Result<()> {
+        let token_program = &ctx.accounts.token_program;
+        let token_account = &ctx.accounts.token_account;
+
+        // 使用CPI调用token program的initialize_immutable_owner指令
+        anchor_spl::token::initialize_immutable_owner(CpiContext::new(
+            token_program.to_account_info(),
+            anchor_spl::token::InitializeImmutableOwner {
+                account: token_account.to_account_info(),
+            },
+        ))?;
+
+        Ok(())
+    }
+
+    pub fn token_close_account(ctx: Context<TokenCloseAccount>) -> Result<()> {
+        let token_program = &ctx.accounts.token_program;
+        let token_account = &ctx.accounts.token_account;
+        let destination = &ctx.accounts.destination;
+        let authority = &ctx.accounts.authority;
+
+        // 使用CPI调用token program的close_account指令
+        anchor_spl::token::close_account(CpiContext::new(
+            token_program.to_account_info(),
+            anchor_spl::token::CloseAccount {
+                account: token_account.to_account_info(),
+                destination: destination.to_account_info(),
+                authority: authority.to_account_info(),
+            },
+        ))?;
+
+        Ok(())
+    }
+
+    pub fn token_sync_native(ctx: Context<TokenSyncNative>) -> Result<()> {
+        let token_program = &ctx.accounts.token_program;
+        let token_account = &ctx.accounts.token_account;
+
+        // 使用CPI调用token program的sync_native指令
+        anchor_spl::token::sync_native(CpiContext::new(
+            token_program.to_account_info(),
+            anchor_spl::token::SyncNative {
+                account: token_account.to_account_info(),
+            },
+        ))?;
+
+        Ok(())
+    }
+
+    pub fn token_transfer(ctx: Context<TokenTransfer>, amount: u64) -> Result<()> {
+        let token_program = &ctx.accounts.token_program;
+        let source = &ctx.accounts.source;
+        let destination = &ctx.accounts.destination;
+        let authority = &ctx.accounts.authority;
+
+        // 使用CPI调用token program的transfer指令
+        anchor_spl::token::transfer(
+            CpiContext::new(
+                token_program.to_account_info(),
+                anchor_spl::token::Transfer {
+                    from: source.to_account_info(),
+                    to: destination.to_account_info(),
+                    authority: authority.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn associated_token_create(ctx: Context<AssociatedTokenCreate>) -> Result<()> {
+        let associated_token_program = &ctx.accounts.associated_token_program;
+        let token_program = &ctx.accounts.token_program;
+        let mint = &ctx.accounts.mint;
+        let wallet = &ctx.accounts.wallet;
+        let payer = &ctx.accounts.payer;
+        let token_account = &ctx.accounts.token_account;
+        let system_program = &ctx.accounts.system_program;
+        let rent = &ctx.accounts.rent;
+
+        // 使用CPI调用associated token program的create_associated_token_account指令
+        anchor_spl::associated_token::create_associated_token_account(CpiContext::new(
+            associated_token_program.to_account_info(),
+            anchor_spl::associated_token::Create {
+                payer: payer.to_account_info(),
+                associated_token: token_account.to_account_info(),
+                authority: wallet.to_account_info(),
+                mint: mint.to_account_info(),
+                system_program: system_program.to_account_info(),
+                token_program: token_program.to_account_info(),
+            },
+        ))?;
+
+        Ok(())
+    }
+
+    // 快速路径小费相关功能
+    pub fn fast_path_tip_static(ctx: Context<FastPathTipStatic>, amount: u64) -> Result<()> {
+        // 从发送者扣除指定金额
+        let from = &ctx.accounts.from;
+        let to = &ctx.accounts.to;
+
+        // 转账SOL
+        **from.try_borrow_mut_lamports()? = from
+            .lamports()
+            .checked_sub(amount)
+            .ok_or(ErrorCode::Overflow)?;
+        **to.try_borrow_mut_lamports()? = to
+            .lamports()
+            .checked_add(amount)
+            .ok_or(ErrorCode::Overflow)?;
+
+        Ok(())
+    }
+
+    pub fn fast_path_tip_dynamic(ctx: Context<FastPathTipDynamic>, base_amount: u64) -> Result<()> {
+        let from = &ctx.accounts.from;
+        let to = &ctx.accounts.to;
+        let current_time = Clock::get()?.unix_timestamp as u64;
+
+        // 动态小费计算逻辑,根据时间和金额计算
+        let mut tip_amount = base_amount;
+
+        // 时间加权逻辑
+        let time_factor = 10000u64; // 默认因子
+        tip_amount = tip_amount
+            .checked_mul(time_factor)
+            .ok_or(ErrorCode::Overflow)?;
+        tip_amount = tip_amount.checked_div(10000).ok_or(ErrorCode::Overflow)?;
+
+        // 转账SOL
+        **from.try_borrow_mut_lamports()? = from
+            .lamports()
+            .checked_sub(tip_amount)
+            .ok_or(ErrorCode::Overflow)?;
+        **to.try_borrow_mut_lamports()? = to
+            .lamports()
+            .checked_add(tip_amount)
+            .ok_or(ErrorCode::Overflow)?;
+
+        Ok(())
+    }
+
+    pub fn fast_path_create_tip_static(ctx: Context<FastPathCreateTipStatic>) -> Result<()> {
+        // 初始化静态小费账户
+        let tip_account = &mut ctx.accounts.tip_account;
+        tip_account.owner = ctx.accounts.authority.key();
+        tip_account.amount = 0;
+        tip_account.tip_type = TipType::Static;
+
+        Ok(())
+    }
+
+    pub fn fast_path_create_tip_dynamic(ctx: Context<FastPathCreateTipDynamic>) -> Result<()> {
+        // 初始化动态小费账户
+        let tip_account = &mut ctx.accounts.tip_account;
+        tip_account.owner = ctx.accounts.authority.key();
+        tip_account.amount = 0;
+        tip_account.tip_type = TipType::Dynamic;
+        tip_account.time_factor = 10000; // 默认时间因子
+
+        Ok(())
+    }
+
+    // 三明治交易相关功能
+    pub fn auto_swap_out(ctx: Context<AutoSwapOut>) -> Result<()> {
+        // 获取当前时间
+        let clock = Clock::get()?;
+        let current_slot = clock.slot;
+
+        // 验证交易者身份
+        if ctx.accounts.validator_id.data_is_empty() == false {
+            if !sandwich_tracker_is_in_validator_id(&ctx.accounts.sandwich_tracker, current_slot)? {
+                return Err(SwapError::InvalidValidator.into());
+            }
+        }
+
+        // 注册sandwich追踪
+        sandwich_tracker_register(
+            &ctx.accounts.sandwich_tracker,
+            current_slot,
+            ctx.accounts.user.key(),
+        )?;
+
+        // // 反序列化交换数据
+        // let swap_data = deserialize_swap(
+        //     &ctx.accounts.program_id,
+        //     &ctx.accounts.pool_data,
+        //     &mut ctx.accounts.output,
+        // )?;
+
+        // if !swap_data {
+        //     return Err(SwapError::InvalidPoolState.into());
+        // }
+
+        // 获取报价和流动性
+        let reverse = ctx.accounts.is_reverse.reverse;
+        let (quote, reserve_a, reserve_b) = if ctx.accounts.dex_type.dex_type == 0 {
+            raydium_get_quote_and_liquidity(
+                ctx.accounts.pool_data.to_account_info(),
+                ctx.accounts.amount.amount,
+                reverse,
+            )?
+        } else {
+            pump_fun_get_quote_and_liquidity(
+                ctx.accounts.pool_data.to_account_info(),
+                ctx.accounts.amount.amount,
+                reverse,
+            )?
+        };
+
+        // 检查流动性
+        if quote == 0 {
+            return Err(SwapError::InsufficientLiquidity.into());
+        }
+
+        // 执行交换指令
+        execute_swap(
+            &ctx.accounts.dex_program.key(),
+            &[
+                ctx.accounts.pool_data.to_account_info(),
+                ctx.accounts.token_a_account.to_account_info(),
+                ctx.accounts.token_b_account.to_account_info(),
+            ],
+            &[3u8], // 简化的指令数据
+            &[],
+        )?;
+
+        // 更新sandwich状态 (backrun)
+        sandwich_update_backrun(
+            &ctx.accounts.sandwich_tracker,
+            ctx.accounts.amount.amount,
+            quote,
+            reserve_a,
+            reserve_b,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn close_sandwich(ctx: Context<CloseSandwich>) -> Result<()> {
+        // 关闭三明治交易
+        if ctx.accounts.sandwich_data.data_len() > 0 {
+            // 记录关闭事件
+            msg!(
+                "Closing sandwich: {}, {}",
+                ctx.accounts.sandwich_data.key(),
+                ctx.accounts.destination.key()
+            );
+
+            // 关闭账户并转移剩余SOL
+            let rent_lamports = ctx.accounts.sandwich_data.lamports();
+            **ctx.accounts.sandwich_data.try_borrow_mut_lamports()? = 0;
+            **ctx.accounts.destination.try_borrow_mut_lamports()? = ctx
+                .accounts
+                .destination
+                .lamports()
+                .checked_add(rent_lamports)
+                .ok_or(ErrorCode::Overflow)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn close_sandwiches_and_topup_tipper(
+        ctx: Context<CloseSandwichesAndTopupTipper>,
+    ) -> Result<()> {
+        let mut total_amount = 0u64;
+        let mut total_rent = 0u64;
+
+        // 记录日志
+        msg!("Closing sandwiches and topping up tipper");
+
+        // 遍历并关闭所有三明治交易
+        let max_sandwiches = 10; // 最大数量限制
+        let sandwiches_count = ctx.accounts.sandwiches_count.count;
+
+        if sandwiches_count <= max_sandwiches {
+            // 计算每个三明治账户的租金
+            let rent_per_account = calculate_rent(165)?;
+
+            // 从三明治账户收集租金
+            let mut collected_rent = 0;
+            for i in 0..sandwiches_count {
+                if i < ctx.accounts.sandwiches.len() {
+                    let sandwich = &ctx.accounts.sandwiches[i];
+                    if !sandwich.data_is_empty() {
+                        // 记录关闭
+                        msg!("Closing sandwich: {}", sandwich.key());
+
+                        // 获取账户租金
+                        collected_rent = collected_rent
+                            .checked_add(rent_per_account)
+                            .ok_or(ErrorCode::Overflow)?;
+
+                        // 关闭账户
+                        close_account_intern(sandwich, &ctx.accounts.tipper.to_account_info())?;
+                    }
+                }
+            }
+
+            // 更新总计
+            total_rent = collected_rent;
+            total_amount = total_rent;
+        }
+
+        // 充值小费账户
+        topup_tipper_intern(
+            total_amount,
+            total_rent,
+            &ctx.accounts.payer.to_account_info(),
+            &ctx.accounts.tipper.to_account_info(),
+        )?;
+
+        Ok(())
+    }
+
+    // 准备函数
+    pub fn prepare(ctx: Context<Prepare>) -> Result<()> {
+        let initialized = ctx.accounts.pool_state.initialized;
+
+        if !initialized {
+            // 读取DEX类型
+            let dex_type = ctx.accounts.dex_type.dex_type;
+
+            // 创建代币账户
+            create_token_account(
+                &ctx.accounts.payer,
+                &ctx.accounts.token_a_mint,
+                &ctx.accounts.token_a_account,
+                &ctx.accounts.token_program,
+                &ctx.accounts.system_program,
+                &ctx.accounts.rent,
+            )?;
+
+            // 创建代币数据
+            create_token_data_intern(
+                &ctx.accounts.token_a_mint.to_account_info(),
+                &ctx.accounts.payer.to_account_info(),
+                &ctx.accounts.token_data.to_account_info(),
+            )?;
+
+            // 迁移代币数据
+            migrate_token_data(
+                &ctx.accounts.token_a_account.to_account_info(),
+                &ctx.accounts.token_data.to_account_info(),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    // 创建授权
+    pub fn create_auth(ctx: Context<CreateAuth>) -> Result<()> {
+        // 初始化授权账户
+        let auth_account = &mut ctx.accounts.auth_account;
+
+        // 设置授权账户数据
+        auth_account.seed = ctx.accounts.seed;
+        auth_account.authority = ctx.accounts.authority.key();
+        auth_account.initialized = true;
+
+        // 写入特殊签名
+        auth_account.signature = 0xbdf49c3c3882102f;
+
+        Ok(())
+    }
+
+    // 账户结构体定义
+    #[derive(Accounts)]
+    pub struct TokenInitializeImmutableOwner<'info> {
+        #[account(mut)]
+        pub token_account: Account<'info, anchor_spl::token::TokenAccount>,
+        pub token_program: Program<'info, anchor_spl::token::Token>,
+    }
+
+    #[derive(Accounts)]
+    pub struct TokenCloseAccount<'info> {
+        #[account(mut)]
+        pub token_account: Account<'info, anchor_spl::token::TokenAccount>,
+        #[account(mut)]
+        pub destination: SystemAccount<'info>,
+        pub authority: Signer<'info>,
+        pub token_program: Program<'info, anchor_spl::token::Token>,
+    }
+
+    #[derive(Accounts)]
+    pub struct TokenSyncNative<'info> {
+        #[account(mut)]
+        pub token_account: Account<'info, anchor_spl::token::TokenAccount>,
+        pub token_program: Program<'info, anchor_spl::token::Token>,
+    }
+
+    #[derive(Accounts)]
+    pub struct TokenTransfer<'info> {
+        #[account(mut)]
+        pub source: Account<'info, anchor_spl::token::TokenAccount>,
+        #[account(mut)]
+        pub destination: Account<'info, anchor_spl::token::TokenAccount>,
+        pub authority: Signer<'info>,
+        pub token_program: Program<'info, anchor_spl::token::Token>,
+    }
+
+    #[derive(Accounts)]
+    pub struct AssociatedTokenCreate<'info> {
+        pub payer: Signer<'info>,
+        #[account(mut)]
+        pub wallet: AccountInfo<'info>,
+        pub mint: Account<'info, anchor_spl::token::Mint>,
+        #[account(mut)]
+        pub token_account: UncheckedAccount<'info>,
+        pub system_program: Program<'info, System>,
+        pub token_program: Program<'info, anchor_spl::token::Token>,
+        pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
+        pub rent: Sysvar<'info, Rent>,
+    }
+
+    #[derive(Accounts)]
+    pub struct FastPathTipStatic<'info> {
+        #[account(mut)]
+        pub from: AccountInfo<'info>,
+        #[account(mut)]
+        pub to: AccountInfo<'info>,
+    }
+
+    #[derive(Accounts)]
+    pub struct FastPathTipDynamic<'info> {
+        #[account(mut)]
+        pub from: AccountInfo<'info>,
+        #[account(mut)]
+        pub to: AccountInfo<'info>,
+        pub clock: Sysvar<'info, Clock>,
+    }
+
+    #[derive(Accounts)]
+    pub struct FastPathCreateTipStatic<'info> {
+        #[account(mut)]
+        pub authority: Signer<'info>,
+        #[account(
+            init,
+            payer = authority,
+            space = 8 + TipAccount::LEN
+        )]
+        pub tip_account: Account<'info, TipAccount>,
+        pub system_program: Program<'info, System>,
+        pub rent: Sysvar<'info, Rent>,
+    }
+
+    #[derive(Accounts)]
+    pub struct FastPathCreateTipDynamic<'info> {
+        #[account(mut)]
+        pub authority: Signer<'info>,
+        #[account(
+            init,
+            payer = authority,
+            space = 8 + TipAccount::LEN
+        )]
+        pub tip_account: Account<'info, TipAccount>,
+        pub system_program: Program<'info, System>,
+        pub rent: Sysvar<'info, Rent>,
+    }
+
+    #[derive(Accounts)]
+    pub struct AutoSwapOut<'info> {
+        #[account(mut)]
+        pub user: Signer<'info>,
+
+        /// CHECK: 程序ID账户
+        pub program_id: AccountInfo<'info>,
+
+        /// CHECK: DEX池数据
+        pub pool_data: AccountInfo<'info>,
+
+        #[account(mut)]
+        pub amount: Account<'info, AmountData>,
+
+        #[account(mut)]
+        pub dex_type: Account<'info, DexType>,
+
+        #[account(mut)]
+        pub is_reverse: Account<'info, ReverseFlag>,
+
+        /// CHECK: DEX程序
+        pub dex_program: AccountInfo<'info>,
+
+        /// 三明治追踪器
+        #[account(mut)]
+        pub sandwich_tracker: Account<'info, SandwichTracker>,
+
+        /// CHECK: 验证者ID账户,可选
+        pub validator_id: AccountInfo<'info>,
+
+        /// 交换输出数据
+        #[account(mut)]
+        pub output: Account<'info, SwapData>,
+
+        /// CHECK: 代币A账户
+        #[account(mut)]
+        pub token_a_account: AccountInfo<'info>,
+
+        /// CHECK: 代币B账户
+        #[account(mut)]
+        pub token_b_account: AccountInfo<'info>,
+
+        pub token_program: Program<'info, anchor_spl::token::Token>,
+        pub system_program: Program<'info, System>,
+    }
+
+    #[derive(Accounts)]
+    pub struct CloseSandwich<'info> {
+        #[account(mut)]
+        pub authority: Signer<'info>,
+
+        /// CHECK: 三明治数据账户
+        #[account(mut)]
+        pub sandwich_data: AccountInfo<'info>,
+
+        /// CHECK: 目标账户
+        #[account(mut)]
+        pub destination: AccountInfo<'info>,
+    }
+
+    #[derive(Accounts)]
+    pub struct CloseSandwichesAndTopupTipper<'info> {
+        #[account(mut)]
+        pub authority: Signer<'info>,
+
+        /// 三明治数量
+        pub sandwiches_count: Account<'info, SandwichesCount>,
+
+        /// CHECK: 三明治账户列表
+        #[account(mut)]
+        pub sandwiches: UncheckedAccount<'info>,
+
+        /// CHECK: 小费接收账户
+        #[account(mut)]
+        pub tipper: AccountInfo<'info>,
+
+        /// CHECK: 支付者
+        #[account(mut)]
+        pub payer: Signer<'info>,
+
+        pub system_program: Program<'info, System>,
+    }
+
+    #[derive(Accounts)]
+    pub struct Prepare<'info> {
+        #[account(mut)]
+        pub payer: Signer<'info>,
+
+        pub dex_type: Account<'info, DexType>,
+
+        #[account(mut)]
+        pub pool_state: Account<'info, PoolState>,
+
+        /// 代币A铸币账户
+        pub token_a_mint: Account<'info, anchor_spl::token::Mint>,
+
+        /// 代币A账户
+        #[account(mut)]
+        pub token_a_account: UncheckedAccount<'info>,
+
+        /// 代币数据账户
+        #[account(mut)]
+        pub token_data: UncheckedAccount<'info>,
+
+        pub token_program: Program<'info, anchor_spl::token::Token>,
+        pub system_program: Program<'info, System>,
+        pub rent: Sysvar<'info, Rent>,
+    }
+
+    #[derive(Accounts)]
+    pub struct CreateAuth<'info> {
+        #[account(mut)]
+        pub authority: Signer<'info>,
+
+        #[account(
+            init,
+            payer = authority,
+            space = 8 + AuthAccount::LEN
+        )]
+        pub auth_account: Account<'info, AuthAccount>,
+
+        pub seed: u8,
+
+        pub system_program: Program<'info, System>,
+        pub rent: Sysvar<'info, Rent>,
+    }
+
+    // 新数据结构定义
+    #[account]
+    #[derive(InitSpace)]
+    pub struct TipAccount {
+        pub owner: Pubkey,
+        pub amount: u64,
+        pub tip_type: TipType,
+        pub time_factor: u64,
+    }
+
+    impl TipAccount {
+        pub const LEN: usize = 32 + 8 + 1 + 8;
+    }
+
+    #[account]
+    #[derive(InitSpace)]
+    pub struct AuthAccount {
+        pub seed: u8,
+        pub authority: Pubkey,
+        pub initialized: bool,
+        pub signature: u64,
+    }
+
+    impl AuthAccount {
+        pub const LEN: usize = 1 + 32 + 1 + 8;
+    }
+
+    #[account]
+    #[derive(InitSpace)]
+    pub struct SandwichesCount {
+        pub count: u8,
+    }
+
+    #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq)]
+    pub enum TipType {
+        Static,
+        Dynamic,
+    }
 }
 
 // Internal implementation functions
@@ -2260,4 +2892,117 @@ fn transfer_(
     // TODO: 实现转账CPI调用
     msg!("transfer_ not implemented yet - CPI required.");
     Ok(())
+}
+
+// 辅助函数
+fn sandwich_tracker_is_in_validator_id(
+    tracker: &Account<SandwichTracker>,
+    slot: u64,
+) -> Result<bool> {
+    // 实现判断验证者ID是否在tracker中的逻辑
+    // 简化版本,实际应实现检查逻辑
+    Ok(true)
+}
+
+fn sandwich_tracker_register(
+    tracker: &Account<SandwichTracker>,
+    slot: u64,
+    user: Pubkey,
+) -> Result<()> {
+    // 实现注册三明治追踪器的逻辑
+    // 简化版本,实际应实现注册逻辑
+    Ok(())
+}
+
+fn sandwich_update_backrun(
+    tracker: &Account<SandwichTracker>,
+    amount: u64,
+    quote: u64,
+    reserve_a: u64,
+    reserve_b: u64,
+) -> Result<()> {
+    // 实现更新三明治backrun的逻辑
+    // 简化版本,实际应实现更新逻辑
+    Ok(())
+}
+
+fn close_account_intern(account: &AccountInfo, destination: &AccountInfo) -> Result<()> {
+    // 关闭账户并转移SOL给目标账户
+    let rent_lamports = account.lamports();
+    **account.try_borrow_mut_lamports()? = 0;
+    **destination.try_borrow_mut_lamports()? = destination
+        .lamports()
+        .checked_add(rent_lamports)
+        .ok_or(ErrorCode::Overflow)?;
+
+    Ok(())
+}
+
+fn calculate_rent(size: u64) -> Result<u64> {
+    // 简化的租金计算
+    // 实际应基于Solana租金计算规则
+    let rent = Rent::get()?;
+    Ok(rent.minimum_balance(size as usize))
+}
+
+fn topup_tipper_intern(
+    amount: u64,
+    rent: u64,
+    payer: &AccountInfo,
+    tipper: &AccountInfo,
+) -> Result<()> {
+    // 充值小费账户
+    if amount > 0 {
+        // 转移SOL
+        **payer.try_borrow_mut_lamports()? = payer
+            .lamports()
+            .checked_sub(amount)
+            .ok_or(ErrorCode::Overflow)?;
+        **tipper.try_borrow_mut_lamports()? = tipper
+            .lamports()
+            .checked_add(amount)
+            .ok_or(ErrorCode::Overflow)?;
+    }
+
+    Ok(())
+}
+
+fn create_token_account(
+    payer: &Signer,
+    mint: &Account<anchor_spl::token::Mint>,
+    token_account: &UncheckedAccount,
+    token_program: &Program<anchor_spl::token::Token>,
+    system_program: &Program<s>,
+    rent: &Sysvar<Rent>,
+) -> Result<()> {
+    // 简化的代币账户创建
+    // 实际应使用CPI调用token program
+    Ok(())
+}
+
+fn create_token_data_intern(
+    mint: &AccountInfo,
+    payer: &AccountInfo,
+    token_data: &AccountInfo,
+) -> Result<()> {
+    // 创建代币数据
+    // 实际实现应包含数据初始化
+    Ok(())
+}
+
+fn migrate_token_data(token_account: &AccountInfo, token_data: &AccountInfo) -> Result<()> {
+    // 迁移代币数据
+    // 实际实现应包含数据迁移逻辑
+    Ok(())
+}
+
+fn execute_swap(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+    signers_seeds: &[&[&[u8]]],
+) -> Result<u64> {
+    // 执行交换的CPI调用
+    // 实际实现应使用CPI
+    Ok(0)
 }
