@@ -35,4 +35,12 @@ pub enum ErrorCode {
     InvalidAuthority,
     #[msg("Insufficient liquidity")]
     InsufficientLiquidity,
+    #[msg("Invalid amount")]
+    InvalidAmount,
+    #[msg("Price out of range")]
+    PriceOutOfRange,
+    #[msg("Invalid quote")]
+    InvalidQuote,
+    #[msg("Invalid validator")]
+    InvalidValidator,
 }
