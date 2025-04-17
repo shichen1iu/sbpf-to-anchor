@@ -272,12 +272,7 @@ pub fn is_buy_amount_too_big(
     let mut liquidity_info = [0u8; 24];
 
     // 获取流动性信息 (call get_liquidity)
-    get_liquidity(
-        &liquidity_info,
-        pool_state,
-        liquidity_amount,
-        &mut liquidity_info,
-    )?;
+    get_liquidity(&liquidity_info, &mut liquidity_info)?;
 
     // 获取报价 (call get_quote)
     let quote = get_quote(
@@ -294,12 +289,3 @@ pub fn is_buy_amount_too_big(
     // 检查有效性并返回相反结果 (call is_valid; xor64 r0, 1)
     Ok(!is_valid(&liquidity_info)?)
 }
-
-/// 检查流动性信息是否有效
-fn is_valid(liquidity_info: &[u8]) -> Result<bool> {
-    // TODO: 实现流动性验证逻辑
-    Ok(true)
-}
-
-///todo 
-/// get_liquidity

@@ -1,3 +1,4 @@
+use crate::utils::*;
 use anchor_lang::prelude::*;
 
 pub fn calculate_profit(
@@ -9,20 +10,10 @@ pub fn calculate_profit(
     let mut liquidity_info = [0u8; 24]; // Based on assembly using r9 which points to 24 bytes buffer
 
     // First get both quote and liquidity
-    get_quote_and_liquidity(
-        liquidity_amount,
-        quote_amount,
-        swap_direction,
-        &mut liquidity_info,
-    )?;
+    get_quote_and_liquidity(&liquidity_info, &mut liquidity_info)?;
 
     // Get liquidity with the info
-    get_liquidity(
-        &liquidity_info,
-        pool_state,
-        swap_direction,
-        &mut liquidity_info,
-    )?;
+    get_liquidity(&liquidity_info, &mut liquidity_info)?;
 
     // Get final quote with opposite direction
     let final_quote = get_quote(&liquidity_info, quote_amount, !swap_direction)?;
@@ -52,22 +43,12 @@ pub fn calculate_profit_optimised(
     // 第一步：获取报价和流动性信息
     // 对应汇编中的 call get_quote_and_liquidity
     // 参数顺序：liquidity_amount(r3), quote_amount(r2), swap_direction(r7), liquidity_info(r9)
-    let initial_quote = get_quote_and_liquidity(
-        liquidity_amount,
-        quote_amount,
-        swap_direction,
-        &mut liquidity_info,
-    )?;
+    let initial_quote = get_quote_and_liquidity(&liquidity_info, &mut liquidity_info)?;
 
     // 第二步：更新流动性信息
     // 对应汇编中的 call get_liquidity
     // 参数顺序：liquidity_info(r9), pool_state(r2), swap_direction(r7), liquidity_info(r9)
-    get_liquidity(
-        &liquidity_info,
-        pool_state,
-        swap_direction,
-        &mut liquidity_info,
-    )?;
+    get_liquidity(&liquidity_info, &mut liquidity_info)?;
 
     // 第三步：使用相反的交换方向获取最终报价
     // 对应汇编中的 xor64 r7, 1 和 call get_quote
@@ -101,26 +82,16 @@ pub fn calculate_optimal_strategy(
     let upper_bound_param2 = u64::from_le_bytes(config_data[8..16].try_into().unwrap());
 
     // 计算上限值
-    let upper_bound = calculate_upper_bound(upper_bound_param1, upper_bound_param2)?;
+    let upper_bound = calculate_upper_bound(initial_state, config, pool_state)?;
 
     // 创建24字节的缓冲区用于存储流动性信息
     let mut liquidity_info = [0u8; 24];
 
     // 第一步：获取初始报价和流动性
-    let initial_quote = get_quote_and_liquidity(
-        swap_direction,
-        upper_bound,
-        liquidity_amount,
-        &mut liquidity_info,
-    )?;
+    let initial_quote = get_quote_and_liquidity(&liquidity_info, &mut liquidity_info)?;
 
     // 更新流动性信息
-    get_liquidity(
-        &liquidity_info,
-        pool_state,
-        liquidity_amount,
-        &mut liquidity_info,
-    )?;
+    get_liquidity(&liquidity_info, &mut liquidity_info)?;
 
     // 计算反向报价
     let opposite_direction = !swap_direction;
@@ -155,20 +126,10 @@ pub fn calculate_optimal_strategy(
 
         // 计算新的报价
         let mut temp_liquidity_info = [0u8; 24];
-        let test_quote = get_quote_and_liquidity(
-            swap_direction,
-            test_amount,
-            liquidity_amount,
-            &mut temp_liquidity_info,
-        )?;
+        let test_quote = get_quote_and_liquidity(&liquidity_info, &mut temp_liquidity_info)?;
 
         // 更新流动性
-        get_liquidity(
-            &temp_liquidity_info,
-            pool_state,
-            liquidity_amount,
-            &mut temp_liquidity_info,
-        )?;
+        get_liquidity(&temp_liquidity_info, &mut temp_liquidity_info)?;
 
         // 计算新的利润
         let new_quote = get_quote(&temp_liquidity_info, test_quote, opposite_direction)?;
@@ -262,17 +223,17 @@ pub fn calculate_optimal_strategy_optimised(
         let mut temp_info = [0u8; 24];
 
         // 第一次报价计算
-        let quote1 = get_quote_and_liquidity(swap_config, 1000, param1, &mut temp_info)?;
+        let quote1 = get_quote_and_liquidity(&temp_info, &mut temp_info)?;
 
-        get_liquidity(&temp_info, pool_state, param1, &mut temp_info)?;
+        get_liquidity(&temp_info, &mut temp_info)?;
 
         let quote2 = get_quote(&temp_info, quote1, !param1)?;
 
         // 第二次报价计算
         let mut temp_info2 = [0u8; 24];
-        let quote3 = get_quote_and_liquidity(swap_config, result_amount, param1, &mut temp_info2)?;
+        let quote3 = get_quote_and_liquidity(&temp_info2, &mut temp_info2)?;
 
-        get_liquidity(&temp_info2, pool_state, param1, &mut temp_info2)?;
+        get_liquidity(&temp_info2, &mut temp_info2)?;
 
         let quote4 = get_quote(&temp_info2, quote3, !param1)?;
 
@@ -288,14 +249,6 @@ pub fn calculate_optimal_strategy_optimised(
     }
 
     Ok(true)
-}
-
-///todo ------
-
-/// 计算上限值的辅助函数
-fn calculate_upper_bound(param1: u64, param2: u64) -> Result<u64> {
-    // TODO: 实现具体的上限计算逻辑
-    Ok(param1)
 }
 
 /// 数学计算辅助函数 - function_12023
@@ -314,27 +267,6 @@ fn function_11552(value: u64, multiplier: u64) -> u64 {
 fn function_9815(value: u64) -> u64 {
     // TODO: 实现具体的计算逻辑
     value
-}
-
-// These functions need to be implemented based on your specific pool logic
-fn get_quote_and_liquidity(
-    liquidity_amount: u64,
-    quote_amount: u64,
-    swap_direction: bool,
-    liquidity_info: &mut [u8],
-) -> Result<u64> {
-    // TODO: Implement based on your pool's logic
-    Ok(0)
-}
-
-fn get_liquidity(
-    liquidity_info: &[u8],
-    pool_state: &mut AccountInfo,
-    swap_direction: bool,
-    output_info: &mut [u8],
-) -> Result<()> {
-    // TODO: Implement based on your pool's logic
-    Ok(())
 }
 
 fn get_quote(liquidity_info: &[u8], quote_amount: u64, swap_direction: bool) -> Result<u64> {
