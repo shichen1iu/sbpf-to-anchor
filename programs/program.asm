@@ -1,4 +1,4 @@
-
+#
 is_valid:
     mov64 r0, 0
     ldxw r2, [r1+0x0]
