@@ -168,7 +168,6 @@ pub fn fast_path_auto_swap_in_pump_fun(
                 AccountMeta::new(*ctx.accounts.pump_pool.key, false),
                 AccountMeta::new(*ctx.accounts.source_token_account.key, false),
                 AccountMeta::new(*ctx.accounts.destination_token_account.key, false),
-                // 其他所需账户
             ],
             data: instruction_data.to_vec(),
         },
@@ -176,7 +175,6 @@ pub fn fast_path_auto_swap_in_pump_fun(
             ctx.accounts.pump_pool.to_account_info(),
             ctx.accounts.source_token_account.to_account_info(),
             ctx.accounts.destination_token_account.to_account_info(),
-            // 其他所需账户
         ],
         &[], // 签名种子
     )?;
