@@ -89,4 +89,32 @@ pub mod sbpf_to_anchor {
     pub fn execute_swap(ctx: Context<ExecuteSwap>, swap_data: Vec<u8>, bump: u8) -> Result<()> {
         instructions::swap::execute_swap(ctx, swap_data, bump)
     }
+
+    pub fn create_global(ctx: Context<CreateGlobal>, input_data: Vec<u8>) -> Result<()> {
+        instructions::system::create_global(ctx, input_data)
+    }
+
+    pub fn update_global(ctx: Context<UpdateGlobal>) -> Result<()> {
+        instructions::system::update_global(ctx)
+    }
+
+    pub fn create_tipper(ctx: Context<CreateTipper>) -> Result<()> {
+        instructions::system::create_tipper(ctx)
+    }
+
+    pub fn create_global(ctx: Context<CreateGlobal>, input_data: Vec<u8>) -> Result<()> {
+        instructions::system::create_global(ctx, input_data)
+    }
+
+    pub fn update_global(ctx: Context<UpdateGlobal>) -> Result<()> {
+        instructions::system::update_global(ctx)
+    }
+
+    pub fn auto_swap_in(ctx: Context<AutoSwapIn>, data: AutoSwapInData) -> Result<()> {
+        instructions::swap::auto_swap_in(ctx, data)
+    }
+
+    pub fn auto_swap_out(ctx: Context<AutoSwapOut>, data: AutoSwapOutData) -> Result<()> {
+        instructions::swap::auto_swap_out(ctx, data)
+    }
 }
