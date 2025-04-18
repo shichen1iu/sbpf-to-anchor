@@ -239,8 +239,6 @@ pub fn pump_fun_price(liquidity_data: &[u8], direction: bool) -> Result<u64> {
         token_b // 保持原值
     };
 
-    // 这里汇编代码似乎没有完成，我们假设最终结果需要结合price_result和final_result
-    // 由于没有完整的汇编代码，我们返回price_result作为最终结果
     Ok(price_result)
 }
 
@@ -912,7 +910,6 @@ pub fn pump_fun_get_liquidity(
 }
 
 /// 用于查找位计数的辅助函数
-/// 这在sBPF汇编中通常通过查表实现 (对应汇编中 0x10001913b 的表查找)
 fn lookup_bits(value: u8) -> u8 {
     // 这是一个典型的计算前导零的函数
     // 在汇编中通常是一个硬编码的查找表
@@ -1370,7 +1367,6 @@ pub fn pump_fun_get_quote_and_liquidity(
 }
 
 /// 检查Token账户是否已经初始化
-/// 该函数从sBPF kpl_any_initialized汇编代码转换而来
 ///
 /// # 参数说明
 /// * `token_data` - Token数据 (对应汇编中的 r1)
@@ -1419,7 +1415,6 @@ pub fn kpl_any_initialized(token_data: &[u8], state_offset: u64) -> Result<bool>
 }
 
 /// 更新输入金额
-/// 该函数从sBPF kpl_update_in_amount汇编代码转换而来
 ///
 /// # 参数说明
 /// * `token_data` - Token数据 (对应汇编中的 r1)

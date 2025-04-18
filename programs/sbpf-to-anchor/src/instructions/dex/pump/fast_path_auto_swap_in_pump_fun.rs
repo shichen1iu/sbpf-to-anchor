@@ -186,8 +186,8 @@ pub fn fast_path_auto_swap_in_pump_fun(
         &ctx.accounts.sandwich_state,
         source_amount,
         dest_amount,
-        0,                         // flag3参数
-        &[0, 0, 0, 0, 0, 0, 0, 0], // stack_values数组，需要至少8个值
+        0,
+        &[0, 0, 0, 0, 0, 0, 0, 0],
     )?;
     // 更新代币数据
     token_data_update_frontrun(
