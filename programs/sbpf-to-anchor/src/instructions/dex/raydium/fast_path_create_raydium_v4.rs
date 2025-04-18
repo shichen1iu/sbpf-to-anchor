@@ -29,7 +29,6 @@ pub struct FastPathCreateRaydiumV4<'info> {
     )]
     pub pool_data_account: AccountInfo<'info>,
     
-    /// 系统程序，用于创建账户
     pub system_program: Program<'info, System>,
 }
 

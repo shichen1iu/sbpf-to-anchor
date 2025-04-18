@@ -25,34 +25,41 @@ pub struct FastPathAutoSwapOutRaydiumV4<'info> {
 
     /// Raydium池账户
     #[account(mut)]
+    ///check:
     pub raydium_pool: AccountInfo<'info>,
 
     /// 源代币账户
     #[account(mut)]
+    ///check:
     pub source_token_account: AccountInfo<'info>,
 
     /// 目标代币账户
     #[account(mut)]
+    ///check:
     pub destination_token_account: AccountInfo<'info>,
 
     /// Raydium程序ID
-    /// @executable
+    ///check:
     pub raydium_program: AccountInfo<'info>,
 
     /// 交易所账户
     #[account(mut)]
+    ///check:
     pub exchange_account: AccountInfo<'info>,
 
     /// 用于更新后置运行数据的账户
     #[account(mut)]
+    ///check:
     pub token_data_account: AccountInfo<'info>,
 
     /// 三明治追踪器账户
     #[account(mut)]
+    ///check:
     pub sandwich_tracker: AccountInfo<'info>,
 
     /// 验证器ID账户
     #[account(mut)]
+    ///check:
     pub validator_id: AccountInfo<'info>,
 
     /// 系统程序

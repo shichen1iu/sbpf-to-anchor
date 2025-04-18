@@ -13,6 +13,7 @@ pub struct AutoSwapIn<'info> {
 
     /// 交换状态账户
     /// 对应汇编中的[r8+0x10]加载
+    ///check:
     pub swap_state: AccountInfo<'info>,
 
     /// 时钟账户

@@ -26,37 +26,45 @@ pub struct FastPathAutoSwapOutPumpFun<'info> {
 
     /// PumpFun池账户
     #[account(mut)]
+    ///check:
     pub pump_pool: AccountInfo<'info>,
 
     /// 源代币账户
     #[account(mut)]
+    ///check:
     pub source_token_account: AccountInfo<'info>,
 
     /// 目标代币账户
     #[account(mut)]
+    ///check:
     pub destination_token_account: AccountInfo<'info>,
 
     /// PumpFun程序ID
-    /// @executable
+    ///check:
     pub pump_program: AccountInfo<'info>,
 
     /// 报价账户
     #[account(mut)]
+    ///check:
     pub quote_account: AccountInfo<'info>,
 
     /// 用于更新三明治数据的账户
     #[account(mut)]
+    ///check:
     pub sandwich_state: AccountInfo<'info>,
 
     /// 用于更新代币数据的账户
     #[account(mut)]
+    ///check:
     pub token_data_account: AccountInfo<'info>,
 
     /// 验证者ID账户
     #[account(mut)]
+    ///check:
     pub validator_id: AccountInfo<'info>,
 
     /// 系统程序
+    ///check:
     pub system_program: Program<'info, System>,
 }
 

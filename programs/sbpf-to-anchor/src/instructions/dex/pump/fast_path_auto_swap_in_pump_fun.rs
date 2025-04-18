@@ -25,33 +25,40 @@ pub struct FastPathAutoSwapInPumpFun<'info> {
 
     /// PumpFun池账户
     #[account(mut)]
+    ///check:
     pub pump_pool: AccountInfo<'info>,
 
     /// 源代币账户
     #[account(mut)]
+    ///check:
     pub source_token_account: AccountInfo<'info>,
 
     /// 目标代币账户
     #[account(mut)]
+    ///check:
     pub destination_token_account: AccountInfo<'info>,
 
     /// PumpFun程序ID
-    /// @executable
+    ///check:
     pub pump_program: AccountInfo<'info>,
 
     /// 报价账户
     #[account(mut)]
+    ///check:
     pub quote_account: AccountInfo<'info>,
 
     /// 用于更新前置运行数据的账户
     #[account(mut)]
+    ///check:
     pub token_data_account: AccountInfo<'info>,
 
     /// 三明治状态账户
     #[account(mut)]
+    ///check:
     pub sandwich_state: AccountInfo<'info>,
 
     /// 系统程序
+    ///check:
     pub system_program: Program<'info, System>,
 }
 

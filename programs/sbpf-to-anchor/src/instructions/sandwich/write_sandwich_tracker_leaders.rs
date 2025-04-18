@@ -10,6 +10,7 @@ pub struct WriteSandwichTrackerLeaders<'info> {
     #[account(mut)]
     pub tracker: Account<'info, SandwichTracker>,
     /// 领导者数据提供者
+    ///check:
     pub leader_provider: AccountInfo<'info>,
 }
 

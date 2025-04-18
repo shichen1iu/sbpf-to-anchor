@@ -9,10 +9,12 @@ use anchor_lang::prelude::*;
 pub struct AutoSwapOut<'info> {
     /// 全局状态账户
     /// 对应汇编中的[r7+0x0]加载
+    ///check:
     pub global_state: AccountInfo<'info>,
 
     /// 交换状态账户
     /// 对应汇编中的[r7+0x10]加载
+    ///check:
     pub swap_state: AccountInfo<'info>,
 
     /// 时钟账户

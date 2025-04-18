@@ -14,10 +14,12 @@ pub struct TipStatic<'info> {
 
     /// 付款方账户，必须是可变的以扣除金额
     #[account(mut)]
+    ///check:
     pub payer: UncheckedAccount<'info>,
 
     /// 接收方账户，必须是可变的以接收金额
     #[account(mut)]
+    ///check:
     pub recipient: UncheckedAccount<'info>,
 
     /// Tipper状态账户，记录打赏信息

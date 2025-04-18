@@ -35,15 +35,14 @@ pub mod swap_type {
 #[derive(Accounts)]
 pub struct ExecuteSwap<'info> {
     /// Token程序ID
-    /// @account 用于执行token操作的程序
+    ///check:
     pub token_program: AccountInfo<'info>,
 
     /// 交换程序ID
-    /// @account 代表要调用的交换程序
+    ///check:
     pub swap_program: AccountInfo<'info>,
 
     /// 当前程序的PDA账户，用于签名
-    /// @account 程序派生地址用于签名交易
     #[account(
         seeds = [b"swap"],
         bump
