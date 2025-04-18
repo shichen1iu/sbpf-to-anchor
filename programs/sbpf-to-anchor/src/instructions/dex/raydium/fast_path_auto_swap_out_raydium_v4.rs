@@ -6,6 +6,8 @@ use crate::instructions::dex::raydium::{
     },
     state::FastPathAutoSwapOutParams,
 };
+use crate::states::*;
+use crate::utils::*;
 use anchor_lang::{
     prelude::*,
     solana_program::{program::invoke_signed, pubkey::Pubkey},
@@ -72,12 +74,15 @@ pub fn fast_path_auto_swap_out_raydium_v4(
     let max_slippage = params.max_slippage;
     let validator_id = params.validator_id;
 
+    let current_slot = Clock::get()?.slot;
+
     // 如果需要验证交易且验证器ID有效，则验证交易
     if validator_id != 65535 {
         // 检查交易是否在验证器ID中
         let is_valid = sandwich_tracker_is_in_validator_id(
             &ctx.accounts.validator_id,
-            // 其他参数
+            current_slot,
+            validator_id,
         );
 
         if !is_valid {
@@ -86,13 +91,7 @@ pub fn fast_path_auto_swap_out_raydium_v4(
     }
 
     // 注册三明治追踪器
-    sandwich_tracker_register(
-        &ctx.accounts.sandwich_tracker,
-        is_source_input,
-        amount_in,
-        max_slippage,
-        // 其他参数
-    )?;
+    sandwich_tracker_register(&ctx.accounts.sandwich_tracker, current_slot)?;
 
     // 获取源代币和目标代币之间的当前价格差异
     let source_price_diff = 0u64; // 计算源代币价格差异
@@ -102,11 +101,7 @@ pub fn fast_path_auto_swap_out_raydium_v4(
     let is_input_token = if is_source_input { 1 } else { 0 };
     let quote_amount = 0u64; // 从获取报价和流动性函数获取
 
-    let quote_and_liquidity = get_quote_and_liquidity(
-        is_input_token,
-        quote_amount,
-        // 其他参数
-    )?;
+    let quote_and_liquidity = get_quote_and_liquidity(amount_in, is_input_token)?;
 
     // 计算价格差异并确保在可接受范围内
     let current_quote = quote_and_liquidity;
@@ -120,15 +115,16 @@ pub fn fast_path_auto_swap_out_raydium_v4(
 
     // 更新输入金额
     let updated_input = kpl_update_in_amount(
-        is_source_input,
+        &ctx.accounts.token_data_account,
+        &mut ctx.accounts.raydium_pool,
+        amount_in,
         is_input_token,
-        // 其他参数
+        max_slippage,
     )?;
 
     // 执行交换
     let exchange_instruction = [
         9u8, // 指令标识符
-            // 其他指令数据
     ];
 
     invoke_signed(
@@ -141,7 +137,6 @@ pub fn fast_path_auto_swap_out_raydium_v4(
             ctx.accounts.raydium_pool.to_account_info(),
             ctx.accounts.source_token_account.to_account_info(),
             ctx.accounts.destination_token_account.to_account_info(),
-            // 其他所需账户
         ],
         &[], // 签名种子
     )?;
@@ -150,13 +145,17 @@ pub fn fast_path_auto_swap_out_raydium_v4(
     sandwich_update_backrun(
         &ctx.accounts.sandwich_state,
         quote_diff,
-        // 其他参数
+        &ctx.accounts.token_data_account,
+        &ctx.accounts.source_token_account,
+        &ctx.accounts.destination_token_account,
+        ctx.accounts.raydium_pool.key(),
     )?;
 
     // 更新代币数据
     token_data_update_backrun(
         &ctx.accounts.token_data_account,
-        // 其他参数
+        &ctx.accounts.source_token_account,
+        &ctx.accounts.destination_token_account,
     )?;
 
     // 检查最终条件和更新余额
@@ -173,12 +172,6 @@ pub fn fast_path_auto_swap_out_raydium_v4(
         let diff_amount = amount_in.saturating_sub(initial_amount);
         let current_balance = 0u64; // 从账户获取当前余额
         let new_balance = current_balance.saturating_sub(diff_amount);
-
-        // 更新账户余额
-        // ...
-
-        // 更新初始金额
-        // ...
     }
 
     Ok(())

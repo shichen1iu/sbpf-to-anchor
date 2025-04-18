@@ -1,3 +1,4 @@
+use crate::utils::*;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{
     entrypoint::ProgramResult, instruction::Instruction, program::invoke_signed,
@@ -55,15 +56,10 @@ pub struct ExecuteSwapOptimised<'info> {
         bump
     )]
     pub program_pda: AccountInfo<'info>,
-
-    /// 交换指令需要的其他账户
-    /// @account 剩余所有交换需要的账户
-    pub remaining_accounts: UncheckedAccount<'info>,
 }
 
 /// 执行优化版本的交换操作
 ///
-/// 此函数实现了与sBPF汇编代码相同的优化交换逻辑:
 /// 1. 根据交换类型执行不同的交换操作
 /// 2. 使用更优化的内存访问模式
 /// 3. 直接交换类型可以获取报价
@@ -98,7 +94,6 @@ pub fn execute_swap_optimised(
         invoke_accounts.push(acc.to_account_info());
     }
 
-    // PDA签名种子
     let seeds = &[b"swap".as_ref(), &[bump]];
 
     // 检查并准备引用
@@ -126,7 +121,7 @@ pub fn execute_swap_optimised(
         let (data_id, data_len) = if flag == 0 {
             // 需要获取报价的情况
             // 对应 lbb_4279 分支
-            quote_value = get_quote(&accounts.quote_program)?;
+            quote_value = get_quote(&accounts.quote_program, &swap_data, &instruction_data)?;
             (swap_type::DIRECT_SWAP_DATA_ID2, 24)
         } else {
             // 不需要获取报价的情况
@@ -267,25 +262,5 @@ fn build_optimised_swap_instruction(
         program_id: *program_id.key,
         accounts: vec![], // 在调用时会填充
         data,
-    }
-}
-
-/// 获取报价信息
-///
-/// 从报价程序获取当前交易的报价
-/// 对应汇编中的 call get_quote
-fn get_quote(quote_program: &AccountInfo) -> Result<u64> {
-    // 在实际实现中，这里应该调用报价程序获取报价
-    // 为简单起见，这里返回一个固定值或从账户数据中读取
-
-    // 模拟从报价程序获取报价
-    let quote_data = quote_program.try_borrow_data()?;
-    if quote_data.len() >= 8 {
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(&quote_data[0..8]);
-        Ok(u64::from_le_bytes(bytes))
-    } else {
-        // 如果没有有效报价，返回默认值
-        Ok(1000) // 默认报价
     }
 }

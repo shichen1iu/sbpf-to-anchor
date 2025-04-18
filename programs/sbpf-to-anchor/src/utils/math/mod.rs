@@ -6,3 +6,6 @@ pub use bounds::*;
 
 pub mod complex_math;
 pub use complex_math::*;
+
+pub mod slippage;
+pub use slippage::*;

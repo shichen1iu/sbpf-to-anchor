@@ -6,6 +6,8 @@ use crate::instructions::dex::raydium::{
     },
     state::FastPathAutoSwapParams,
 };
+use crate::states::*;
+use crate::utils::*;
 use anchor_lang::{
     prelude::*,
     solana_program::{program::invoke_signed, pubkey::Pubkey},
@@ -155,7 +157,6 @@ pub fn fast_path_auto_swap_in_raydium_v4(
             ctx.accounts.raydium_pool.to_account_info(),
             ctx.accounts.source_token_account.to_account_info(),
             ctx.accounts.destination_token_account.to_account_info(),
-            // 其他所需账户
         ],
         &[], // 签名种子
     )?;
@@ -174,13 +175,18 @@ pub fn fast_path_auto_swap_in_raydium_v4(
     // 调用三明治更新函数
     sandwich_update_frontrun(
         &ctx.accounts.sandwich_state,
-        // 其他参数
+        is_using_source,
+        amount_to_use,
+        source_amount,
+        dest_amount,
     )?;
 
     // 更新代币数据
     token_data_update_frontrun(
         &ctx.accounts.token_data_account,
-        // 其他参数
+        is_using_source,
+        source_amount,
+        dest_amount,
     )?;
 
     Ok(())

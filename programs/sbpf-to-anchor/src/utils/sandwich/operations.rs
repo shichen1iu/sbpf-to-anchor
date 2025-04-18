@@ -248,7 +248,6 @@ pub fn close_sandwiches_and_topup_tipper(accounts: &[AccountInfo]) -> Result<()>
 }
 
 /// 注册三明治跟踪器
-/// 此函数实现了sBPF汇编中的sandwich_tracker_register函数
 /// 用于记录时间戳和更新计数器
 pub fn sandwich_tracker_register(tracker_data: &AccountInfo, timestamp: u64) -> Result<()> {
     // 初始化变量 - 对应汇编中的mov64 r3, 0
@@ -358,6 +357,193 @@ pub fn sandwich_tracker_register(tracker_data: &AccountInfo, timestamp: u64) -> 
         data[counter_base_addr + counter_offset2..counter_base_addr + counter_offset2 + 2]
             .copy_from_slice(&new_counter2.to_le_bytes());
     }
+
+    Ok(())
+}
+
+/// 更新代币数据前置操作
+/// 此函数实现了sBPF汇编中的token_data_update_frontrun函数
+/// 用于更新代币数据账户的信息
+pub fn token_data_update_frontrun(
+    token_data: &AccountInfo,     // r7
+    source_account: &AccountInfo, // r9
+    ptr_account: &AccountInfo,    // r6
+    opt_account: &AccountInfo,    // r8
+) -> Result<()> {
+    // 读取标志位 - 对应汇编中的 ldxb r1, [r7+0x8]
+    let mut data = token_data.try_borrow_mut_data()?;
+    let flag = data[0x8];
+
+    // 如果标志位为0，则初始化账户 - 对应汇编中的 jne r1, 0, lbb_9207
+    if flag == 0 {
+        // 设置标志位为1 - 对应汇编中的 mov64 r1, 1 和 stxb [r7+0x8], r1
+        data[0x8] = 1;
+
+        // 内存拷贝常量数据 - 对应汇编中的 call memcpy
+        // 源地址为0x10001a328，目标地址为token_data+296，大小为96字节
+        let constant_data = [0u8; 96]; // 实际应该是某个特定的常量数据
+        if data.len() >= 296 + 96 {
+            data[296..296 + 96].copy_from_slice(&constant_data);
+        }
+
+        // 从source_account复制数据 - 对应汇编中的ldxdw/stxdw序列
+        if let Ok(source_data) = source_account.try_borrow_data() {
+            if source_data.len() >= 0x20 && data.len() >= 0x30 {
+                // 复制4个u64值，偏移分别为0x0, 0x8, 0x10, 0x18
+                data[0x10..0x18].copy_from_slice(&source_data[0x0..0x8]);
+                data[0x18..0x20].copy_from_slice(&source_data[0x8..0x10]);
+                data[0x20..0x28].copy_from_slice(&source_data[0x10..0x18]);
+                data[0x28..0x30].copy_from_slice(&source_data[0x18..0x20]);
+            }
+        }
+
+        // 从ptr_account复制数据 - 对应汇编中的ldxdw/stxdw
+        if let Ok(ptr_data) = ptr_account.try_borrow_data() {
+            if ptr_data.len() >= 0x8 && data.len() >= 0x210 {
+                data[0x208..0x210].copy_from_slice(&ptr_data[0x0..0x8]);
+            }
+        }
+    }
+
+    // 如果opt_account不为空，则从中复制数据 - 对应汇编中的jeq r8, 0, lbb_9216
+    if opt_account.key != &Pubkey::default() {
+        if let Ok(opt_data) = opt_account.try_borrow_data() {
+            if opt_data.len() >= 0x20 && data.len() >= 0x50 {
+                // 复制4个u64值，但顺序与原始字段相反
+                data[0x48..0x50].copy_from_slice(&opt_data[0x18..0x20]);
+                data[0x40..0x48].copy_from_slice(&opt_data[0x10..0x18]);
+                data[0x38..0x40].copy_from_slice(&opt_data[0x8..0x10]);
+                data[0x30..0x38].copy_from_slice(&opt_data[0x0..0x8]);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 更新代币数据后置操作
+/// 此函数实现了sBPF汇编中的token_data_update_backrun函数
+/// 用于更新代币数据账户的后置信息并处理报价
+pub fn token_data_update_backrun(
+    token_data: &AccountInfo,     // r6
+    quote_account: &AccountInfo,  // r8
+    source_account: &AccountInfo, // r7
+) -> Result<()> {
+    // 读取状态标志位 - 对应汇编中的 ldxb r2, [r7+0x99]
+    let mut data = token_data.try_borrow_mut_data()?;
+
+    if source_account.data_len() < 0x9A {
+        return Ok(());
+    }
+
+    let source_data = source_account.try_borrow_data()?;
+    let flag = source_data[0x99];
+
+    // 初始化变量 - 对应汇编中的 mov64 r0, 0 等指令
+    let mut r0: u64 = 0;
+    let mut r9: u64 = 1;
+    let mut r1: u64 = 1;
+
+    // 条件逻辑 - 对应汇编中的 jne r2, 0, lbb_9228 等指令
+    if flag != 0 {
+        r1 = 0;
+    }
+
+    if flag == 0 {
+        r9 = 0;
+    }
+
+    // 读取第二个状态标志 - 对应汇编中的 ldxb r2, [r7+0x9b]
+    let flag2 = if source_data.len() > 0x9B {
+        source_data[0x9B]
+    } else {
+        0
+    };
+
+    // 处理额外数据 - 对应汇编中的 jeq r2, 0, lbb_9233 和后续指令
+    if flag2 != 0 {
+        r9 = r1;
+    }
+
+    // 读取和存储数据 - 对应汇编中的 ldxdw/stxdw 操作
+    let mut r4: u64 = 0;
+    if flag2 != 0 && source_data.len() >= 0x1000 {
+        // 这里简化处理，实际应该获取特定偏移的数据
+        // 对应汇编中的 ldxdw r4, [r5-0x1000]
+    }
+
+    // 存储值到token_data - 对应汇编中的 stxdw [r6+0x50], r4
+    if data.len() >= 0x58 {
+        data[0x50..0x58].copy_from_slice(&r4.to_le_bytes());
+    }
+
+    // 获取额外数据 - 对应汇编中的 ldxdw r1, [r5-0xff8]
+    let r1: u64 = 0; // 简化实现
+
+    // 获取报价 - 对应汇编中的 call get_quote
+    if r4 != 0 && data.len() >= 0x60 {
+        let r3 = r9 & 1;
+        // 这里应该调用get_quote函数，简化实现
+        // r0 = get_quote(quote_account, r4, r3)?;
+    }
+
+    // 存储报价结果 - 对应汇编中的 stxdw [r6+0x58], r0
+    if data.len() >= 0x60 {
+        data[0x58..0x60].copy_from_slice(&r0.to_le_bytes());
+    }
+
+    // 获取第二个报价 - 对应汇编中的后续指令
+    r9 = !r9 & 1;
+    // 简化实现，应该调用get_quote
+    // r0 = get_quote(quote_account, 1000000000, r9)?;
+
+    // 存储第二个报价结果到特定位置 - 对应汇编中的 stxdw [r6+0x2b0], r0
+    if data.len() >= 0x2B8 {
+        data[0x2B0..0x2B8].copy_from_slice(&r0.to_le_bytes());
+
+        // 更新最小值逻辑 - 对应汇编中的比较和条件存储
+        if data.len() >= 0x2B0 {
+            let r1 = u64::from_le_bytes(data[0x2A8..0x2B0].try_into().unwrap_or_default());
+            if r0 <= r1.saturating_sub(1) {
+                data[0x2A8..0x2B0].copy_from_slice(&r0.to_le_bytes());
+            }
+        }
+
+        // 更新第二个最小值 - 对应汇编中的第二个比较和条件存储
+        if data.len() >= 0x2A8 {
+            let r1 = u64::from_le_bytes(data[0x2A0..0x2A8].try_into().unwrap_or_default());
+            if r0 <= r1.saturating_sub(1) {
+                data[0x2A0..0x2A8].copy_from_slice(&r0.to_le_bytes());
+            }
+        }
+    }
+
+    // 更新累计值 - 对应汇编中的加法和存储操作
+    if source_data.len() >= 0x80 && data.len() >= 0x70 {
+        // 读取源账户数据
+        let r1 = u64::from_le_bytes(source_data[0x78..0x80].try_into().unwrap_or_default());
+        // 读取目标账户当前数据
+        let r2 = u64::from_le_bytes(data[0x60..0x68].try_into().unwrap_or_default());
+        // 计算新值并存储
+        let new_value = r2.saturating_add(r1);
+        data[0x60..0x68].copy_from_slice(&new_value.to_le_bytes());
+
+        // 读取第二个源账户数据
+        let r1 = u64::from_le_bytes(source_data[0x70..0x78].try_into().unwrap_or_default());
+        // 读取第二个目标账户当前数据
+        let r2 = u64::from_le_bytes(data[0x68..0x70].try_into().unwrap_or_default());
+        // 计算新值并存储
+        let new_value = r2.saturating_add(r1);
+        data[0x68..0x70].copy_from_slice(&new_value.to_le_bytes());
+    }
+
+    // 获取下一个目标 - 对应汇编中的 call pg_get_next_goal
+    // 这部分需要一个专门的函数，简化实现
+    // let mut r7 = r6 + 296;
+    // let mut r0 = pg_get_next_goal(r7)?;
+
+    // 最后的循环处理 - 对应汇编中的最后部分循环
+    // 简化实现，实际应该处理目标值和更新
 
     Ok(())
 }

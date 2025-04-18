@@ -1,4 +1,5 @@
 use crate::instructions::sandwich::state::SandwichTracker;
+use crate::states::*;
 use anchor_lang::prelude::*;
 
 /// 扩展三明治追踪器指令
@@ -11,7 +12,6 @@ pub struct ExtendSandwichTracker<'info> {
 
 /// 扩展三明治追踪器
 ///
-/// 此函数实现了与sBPF同等的逻辑:
 /// 1. 检查计数是否超过285655
 /// 2. 如果没有超过，计算需要增加的量(285656减去当前值)
 /// 3. 如果增加量超过10240，则限制为10240

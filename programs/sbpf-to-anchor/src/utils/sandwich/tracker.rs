@@ -89,7 +89,6 @@ pub fn sandwich_tracker_get_identity(tracker_data: &AccountInfo, index: u64) -> 
 }
 
 /// 更新回程交易
-/// 此函数实现了sBPF汇编中的sandwich_update_backrun函数
 /// 更新三明治交易的回程数据
 pub fn sandwich_update_backrun(
     sandwich_account: &AccountInfo,
@@ -189,7 +188,6 @@ pub fn sandwich_update_backrun(
 }
 
 /// 更新前置交易
-/// 此函数实现了sBPF汇编中的sandwich_update_frontrun函数
 /// 更新三明治交易的前置数据
 pub fn sandwich_update_frontrun(
     sandwich_account: &AccountInfo,

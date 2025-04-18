@@ -1,19 +1,26 @@
 use crate::instructions::sandwich::state::{SandwichTracker, TrackerIdentity};
+use crate::states::*;
 use anchor_lang::prelude::*;
 
 /// 写入三明治追踪器身份指令
 #[derive(Accounts)]
 pub struct WriteSandwichTrackerIdentities<'info> {
     /// 三明治跟踪器账户
-    #[account(mut)]
+    #[account(
+        mut,
+        realloc = 8 + 8 + 4 + (offset as usize + identity_count as usize) * std::mem::size_of::<TrackerIdentity>(),
+        realloc::payer = identity_provider,
+        realloc::zero = true
+    )]
     pub tracker: Account<'info, SandwichTracker>,
     /// 身份数据提供者
-    pub identity_provider: AccountInfo<'info>,
+    #[account(mut)]
+    pub identity_provider: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 /// 写入三明治追踪器身份数据
 ///
-/// 此函数实现了与sBPF同等的逻辑:
 /// 1. 从identity_provider账户加载身份数据
 /// 2. 检查身份数据数量，如果为0则直接返回
 /// 3. 遍历身份数组，将数据写入到tracker账户中
@@ -24,7 +31,7 @@ pub fn write_sandwich_tracker_identities(
     let identity_provider = &ctx.accounts.identity_provider;
     let identity_data = identity_provider.try_borrow_data()?;
 
-    // 读取身份数量 (从偏移量0x8处读取)
+    // 读取身份数量和偏移量
     let identity_count = if identity_data.len() >= 16 {
         let count_bytes = &identity_data[8..16];
         u64::from_le_bytes(count_bytes.try_into().unwrap())
@@ -32,12 +39,10 @@ pub fn write_sandwich_tracker_identities(
         return Ok(());
     };
 
-    // 如果身份数量为0，直接返回
     if identity_count == 0 {
         return Ok(());
     }
 
-    // 读取偏移量 (从偏移量0x0处读取)
     let offset = if identity_data.len() >= 8 {
         let offset_bytes = &identity_data[0..8];
         u64::from_le_bytes(offset_bytes.try_into().unwrap())
@@ -45,20 +50,12 @@ pub fn write_sandwich_tracker_identities(
         0
     };
 
-    // 写入身份数据到跟踪器账户
+    // 账户空间已通过realloc处理好，可以直接写入数据
     let mut tracker = &mut ctx.accounts.tracker;
-
-    // 确保跟踪器有足够空间存储身份数据
-    if tracker.identities.len() < (offset as usize + identity_count as usize) {
-        tracker.identities.resize(
-            offset as usize + identity_count as usize,
-            TrackerIdentity::default(),
-        );
-    }
 
     // 遍历并写入身份数据
     for i in 0..identity_count {
-        // 计算源数据位置 (从偏移量16开始，每32字节一个身份)
+        // 计算源数据位置
         let src_pos = 16 + (i as usize) * 32;
 
         // 确保源数据有足够的字节
@@ -83,12 +80,21 @@ pub fn write_sandwich_tracker_identities(
 
         // 写入到目标位置
         let dest_idx = (offset + i) as usize;
-        tracker.identities[dest_idx] = TrackerIdentity {
-            data1,
-            data2,
-            data3,
-            data4,
-        };
+        if dest_idx >= tracker.identities.len() {
+            tracker.identities.push(TrackerIdentity {
+                data1,
+                data2,
+                data3,
+                data4,
+            });
+        } else {
+            tracker.identities[dest_idx] = TrackerIdentity {
+                data1,
+                data2,
+                data3,
+                data4,
+            };
+        }
     }
 
     Ok(())

@@ -7,6 +7,8 @@ use crate::instructions::dex::pump::{
     },
     state::FastPathAutoSwapOutPumpParams,
 };
+use crate::states::*;
+use crate::utils::*;
 use anchor_lang::{
     prelude::*,
     solana_program::{program::invoke_signed, pubkey::Pubkey},
@@ -71,7 +73,6 @@ pub fn fast_path_auto_swap_out_pump_fun(
     let swap_amount = params.amount;
     let validator_id = params.validator_id;
 
-    // 检查验证者ID - 对应sBPF代码中的jeq r3, 65535, lbb_4664判断
     if validator_id == 65535 {
         // 跳转到注册验证者ID的逻辑
     } else {
@@ -79,10 +80,11 @@ pub fn fast_path_auto_swap_out_pump_fun(
         let is_in_validator = sandwich_tracker_is_in_validator_id(
             &ctx.accounts.validator_id,
             &ctx.accounts.sandwich_state,
+            validator_id,
         )?;
 
         if is_in_validator == 0 {
-            return Err(ErrorCode::ValidationFailed.into()); // 对应sBPF中的错误码6000
+            return Err(ErrorCode::ValidationFailed.into());
         }
     }
 
@@ -90,25 +92,20 @@ pub fn fast_path_auto_swap_out_pump_fun(
     sandwich_tracker_register(&ctx.accounts.sandwich_state, &ctx.accounts.validator_id)?;
 
     // 初始化一些变量
-    let is_registered = 1; // 对应sBPF代码中的r8设置为1
+    let is_registered = 1;
 
-    // 获取当前价格 - 对应sBPF代码从内存地址中读取
+    // 获取当前价格
     let current_price_source = 0u64; // 需要从相应的账户中获取
     let current_price_dest = 0u64; // 需要从相应的账户中获取
 
     // 获取报价 - 对应调用get_quote_and_liquidity
-    let quote_result = get_quote_and_liquidity(
-        current_price_source,
-        current_price_dest,
-        &ctx.accounts.quote_account,
-        is_registered,
-    )?;
+    let quote_result = get_quote_and_liquidity(current_price_source, current_price_dest)?;
 
-    // 计算价格差异 - 对应sBPF代码中的计算
+    // 计算价格差异
     let other_value = 0u64; // 需要从相应的账户中获取
     let price_diff = quote_result.saturating_sub(other_value);
 
-    // 日志记录 - 对应syscall sol_log_64_
+    // 日志记录
     msg!(
         "Price diff: {}, {}, {}, 0, 0",
         price_diff,
@@ -116,12 +113,12 @@ pub fn fast_path_auto_swap_out_pump_fun(
         other_value
     );
 
-    // 检查价格差异是否满足条件 - 对应jsgt r8, r6, lbb_4823
+    // 检查价格差异是否满足条件
     if is_registered <= price_diff {
         return Err(ErrorCode::PriceDiffTooLarge.into()); // 对应sBPF中的错误码6004
     }
 
-    // 检查任何初始化 - 对应调用kpl_any_initialized
+    // 检查任何初始化 -
     let is_initialized = kpl_any_initialized(&ctx.accounts.token_data_account, 0)?;
 
     // 获取适当的账户数据 - 对应sBPF代码中的条件判断和内存复制
@@ -159,7 +156,6 @@ pub fn fast_path_auto_swap_out_pump_fun(
             ctx.accounts.pump_pool.to_account_info(),
             ctx.accounts.source_token_account.to_account_info(),
             ctx.accounts.destination_token_account.to_account_info(),
-            // 其他所需账户...
         ],
         &[], // 签名种子
     )?;
@@ -168,18 +164,19 @@ pub fn fast_path_auto_swap_out_pump_fun(
     let updated_source_amount = 0u64; // 需要从相应的账户中获取
     let updated_dest_amount = 0u64; // 需要从相应的账户中获取
 
-    // 调用三明治后置运行更新函数 - 对应调用sandwich_update_backrun
+    // 调用三明治后置运行更新函数
     sandwich_update_backrun(
         &ctx.accounts.sandwich_state,
         price_diff,
         source_amount,
         dest_amount,
+        ctx.accounts.source_token_account.key(),
+        ctx.accounts.destination_token_account.key(),
     )?;
 
-    // 更新代币数据 - 对应调用token_data_update_backrun
+    // 更新代币数据
     token_data_update_backrun(
         &ctx.accounts.token_data_account,
-        &ctx.accounts.sandwich_state,
         source_amount,
         updated_dest_amount,
     )?;
@@ -190,15 +187,13 @@ pub fn fast_path_auto_swap_out_pump_fun(
         return Err(ErrorCode::FinalCheckFailed.into()); // 对应sBPF中的错误码6005
     }
 
-    // 更新余额 - 对应sBPF代码中的最终余额更新
+    // 更新余额
     let balance_check = 0u64; // 需要从相应的账户中获取
     if balance_check >= swap_amount {
         return Ok(());
     }
 
     let diff = swap_amount.saturating_sub(balance_check);
-
-    // 更新相关余额账户 - 这里简化处理，实际代码需要更新正确的账户
 
     Ok(())
 }

@@ -23,13 +23,6 @@ pub fn is_valid(liquidity_info: &[u8]) -> Result<bool> {
     Ok(result)
 }
 
-/// Raydium DEX的有效性检查
-fn raydium_is_valid(liquidity_data: &[u8]) -> Result<bool> {
-    // TODO: 实现Raydium的有效性检查逻辑
-    // 暂时返回true表示有效
-    Ok(true)
-}
-
 /// 检查三明治交易追踪器中是否存在验证者ID
 /// 这个函数检查给定的验证者ID是否在追踪器的记录范围内
 ///

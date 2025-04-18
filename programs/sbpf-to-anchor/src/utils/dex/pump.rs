@@ -246,11 +246,73 @@ pub fn pump_fun_price(liquidity_data: &[u8], direction: bool) -> Result<u64> {
 
 /// 处理价格的辅助函数
 /// 这个函数在sBPF汇编中对应function_12023
-/// todo
 fn process_price(token_amount: u64) -> Result<u64> {
-    // 这里应该实现真实的价格处理逻辑
-    // 由于我们没有function_12023的具体实现，暂时返回token_amount作为示例
-    Ok(token_amount)
+    // 如果输入为0，返回0 (mov64 r0, 0; jeq r1, 0, lbb_12085)
+    if token_amount == 0 {
+        return Ok(0);
+    }
+
+    // 第一阶段：计算二进制位的逻辑操作
+    // 这些操作目的是填充位模式，使每个1位后面都跟着1位（设置位的传播）
+    let mut val = token_amount;
+
+    // 右移1位然后OR (rsh64 r3, 1; or64 r2, r3)
+    val |= val >> 1;
+
+    // 右移2位然后OR (rsh64 r3, 2; or64 r2, r3)
+    val |= val >> 2;
+
+    // 右移4位然后OR (rsh64 r3, 4; or64 r2, r3)
+    val |= val >> 4;
+
+    // 右移8位然后OR (rsh64 r3, 8; or64 r2, r3)
+    val |= val >> 8;
+
+    // 右移16位然后OR (rsh64 r3, 16; or64 r2, r3)
+    val |= val >> 16;
+
+    // 右移32位然后OR (rsh64 r3, 32; or64 r2, r3)
+    val |= val >> 32;
+
+    // 按位取反 (xor64 r2, -1)
+    val = !val;
+
+    // 第二阶段：汉明权重计算（计算二进制中1的个数）
+    // 使用SWAR（SIMD Within A Register）算法
+
+    // 应用掩码并计算 (lddw r3, 0x5555555555555555)
+    let mut count = val;
+    count -= ((count >> 1) & 0x5555555555555555);
+
+    // 继续SWAR算法 (lddw r4, 0x3333333333333333)
+    count = (count & 0x3333333333333333) + ((count >> 2) & 0x3333333333333333);
+
+    // 调整计数 (rsh64 r2, 4; add64 r3, r2)
+    count = (count + (count >> 4)) & 0x0f0f0f0f0f0f0f0f;
+
+    // 最终计算 (lddw r2, 0x101010101010101; mul64 r3, r2; rsh64 r3, 56)
+    count = (count * 0x0101010101010101) >> 56;
+
+    // 第三阶段：基于计数结果进行位移和最终计算
+    let shift_result = token_amount << count;
+    let shift_factor = count << 52;
+
+    // 右移和减法 (rsh64 r2, 11; sub64 r0, r3)
+    let mut result = (shift_result >> 11).wrapping_sub(shift_factor);
+
+    // 条件调整 (xor64 r2, -1; lsh64 r1, 53; rsh64 r3, 63; and64 r3, r2)
+    let neg_mask = !(shift_result >> 11);
+    let sign_bit = (shift_result << 53) >> 63;
+    let adjustment = sign_bit & neg_mask;
+
+    // 最终调整 (sub64 r1, r3; rsh64 r1, 63; add64 r0, r1)
+    result = result.wrapping_add(((shift_result << 53).wrapping_sub(adjustment)) >> 63);
+
+    // 加上常数返回 (lddw r1, 0x43d0000000000000; add64 r0, r1)
+    result = result.wrapping_add(0x43d0000000000000);
+
+    // 返回结果
+    Ok(result)
 }
 
 /// Pump DEX的池有效性验证函数
@@ -309,11 +371,98 @@ pub fn pump_fun_is_valid(liquidity_data: &[u8]) -> Result<bool> {
 
 /// 计算比率的辅助函数
 /// 这个函数在sBPF汇编中对应function_12129
-/// todo
 fn calculate_ratio(value1: u64, value2: u64) -> Result<u64> {
-    // 由于没有function_12129的具体实现，这里提供一个简单示例
-    // 例如返回两个值的比率或关系
-    Ok(value1.wrapping_mul(value2))
+    // 直接调用function_12384并返回结果
+    calculate_ratio_impl(value1, value2)
+}
+
+/// 比率计算的实际实现
+/// 这个函数在sBPF汇编中对应function_12384
+fn calculate_ratio_impl(value1: u64, value2: u64) -> Result<u64> {
+    // 提取符号位 (mov64 r4, r2; xor64 r4, r1; lddw r3, 0x8000000000000000; and64 r4, r3)
+    let sign_bit = (value2 ^ value1) & 0x8000000000000000;
+
+    // 提取尾数掩码 (lddw r4, 0xfffffffffffff)
+    let mantissa_mask = 0xfffffffffffff;
+
+    // 提取指数 (mov64 r8, r2; rsh64 r8, 52; and64 r8, 2047)
+    let exp1 = (value1 >> 52) & 0x7ff;
+    let exp2 = (value2 >> 52) & 0x7ff;
+
+    // 提取尾数 (mov64 r9, r1; and64 r9, r4)
+    let man1 = value1 & mantissa_mask;
+    let man2 = value2 & mantissa_mask;
+
+    // 检查特殊值 (lddw r0, 0x7fffffffffffffff)
+    let abs_mask = 0x7fffffffffffffff;
+    let abs1 = value1 & abs_mask;
+    let abs2 = value2 & abs_mask;
+
+    // 无穷大和NaN检查 (lddw r7, 0x7ff0000000000000)
+    let inf_mask = 0x7ff0000000000000;
+
+    // 处理特殊情况
+    // 如果任一输入是NaN (jgt r5, r7 或 jgt r4, r7)
+    if (abs1 > inf_mask) || (abs2 > inf_mask) {
+        // 返回NaN (0x7ff8000000000000)
+        return Ok(0x7ff8000000000000);
+    }
+
+    // 如果两个输入都是无穷大 (jeq r5, r6 和 jeq r4, r6)
+    if exp1 == 0x7ff && man1 == 0 && exp2 == 0x7ff && man2 == 0 {
+        // 返回无穷大，符号由符号位确定
+        return Ok(inf_mask | sign_bit);
+    }
+
+    // 如果value1是无穷大 (jeq r5, r6)
+    if exp1 == 0x7ff && man1 == 0 {
+        // 如果value2是0，返回NaN
+        if abs2 == 0 {
+            return Ok(0x7ff8000000000000);
+        }
+        // 否则返回带符号的无穷大
+        return Ok(inf_mask | sign_bit);
+    }
+
+    // 如果value2是无穷大 (jeq r4, r6)
+    if exp2 == 0x7ff && man2 == 0 {
+        // 如果value1是0，返回NaN
+        if abs1 == 0 {
+            return Ok(0x7ff8000000000000);
+        }
+        // 否则返回带符号的无穷大
+        return Ok(inf_mask | sign_bit);
+    }
+
+    // 如果两个输入都是0 (jeq r5, 0 和 jeq r4, 0)
+    if abs1 == 0 && abs2 == 0 {
+        // 两个0相乘返回带符号的0
+        return Ok(sign_bit);
+    }
+
+    // 如果value1是0 (jeq r5, 0)
+    if abs1 == 0 {
+        return Ok(sign_bit);
+    }
+
+    // 如果value2是0 (jeq r4, 0)
+    if abs2 == 0 {
+        return Ok(sign_bit);
+    }
+
+    // 对于正常的浮点数计算，我们使用Rust的浮点乘法
+    // 这与sBPF中的复杂算法效果相同，但更简洁
+    let f1 = f64::from_bits(value1);
+    let f2 = f64::from_bits(value2);
+    let result = f1 * f2;
+
+    // 处理特殊情况：溢出到无穷大
+    if result.is_infinite() && !f1.is_infinite() && !f2.is_infinite() {
+        return Ok(inf_mask | sign_bit);
+    }
+
+    // 返回结果的位表示
+    Ok(result.to_bits())
 }
 
 /// 比较值的辅助函数
@@ -589,10 +738,10 @@ pub fn pump_fun_get_liquidity(
         // 获取 B 池的高32位 (mov64 r0, r4; rsh64 r0, 32)
         let pool_b_hi = pool_b >> 32;
 
-        // 计算更多的交叉乘积 (mul64 r5, r0)
-        let cross_mul3 = pool_a_hi * pool_b_hi;
+        // 计算更多的交叉乘积 (mov64 r7, r1; mul64 r7, r2)
+        let cross_mul3 = pool_b_hi * pool_a_hi;
 
-        // 获取交叉乘积的高32位 (mov64 r1, r2; rsh64 r1, 32)
+        // 获取交叉乘积的高32位 (mov64 r6, r3; rsh64 r6, 32)
         let cross_hi = cross_sum >> 32;
 
         // 合并高位结果 (add64 r1, r5)
@@ -993,7 +1142,7 @@ pub fn pump_fun_get_quote_and_liquidity(
 
             // 执行最终调整 (mov64 r1, r8; xor64 r1, -1; ldxdw r0, [r10-0x38]; add64 r0, r1)
             let inverted = !final_result;
-            let result = pool_a + inverted;
+            let result = pool_b + inverted;
 
             // 存储结果到输出缓冲区 (stxdw [r9+0x8], r4; stxdw [r9+0x0], r8)
             output_buffer[8..16].copy_from_slice(&amount_adjusted.to_le_bytes());
@@ -1047,10 +1196,10 @@ pub fn pump_fun_get_quote_and_liquidity(
         // 获取 B 池的高32位 (mov64 r0, r4; rsh64 r0, 32)
         let pool_b_hi = pool_b >> 32;
 
-        // 计算更多的交叉乘积 (mul64 r5, r0)
-        let cross_mul3 = pool_a_hi * pool_b_hi;
+        // 计算更多的交叉乘积 (mov64 r7, r1; mul64 r7, r2)
+        let cross_mul3 = pool_b_hi * pool_a_hi;
 
-        // 获取交叉乘积的高32位 (mov64 r1, r2; rsh64 r1, 32)
+        // 获取交叉乘积的高32位 (mov64 r6, r3; rsh64 r6, 32)
         let cross_hi = cross_sum >> 32;
 
         // 合并高位结果 (add64 r1, r5)
@@ -1215,6 +1364,249 @@ pub fn pump_fun_get_quote_and_liquidity(
         // 存储结果到输出缓冲区 (stxdw [r9+0x8], r4; stxdw [r9+0x0], r8)
         output_buffer[8..16].copy_from_slice(&amount_adjusted.to_le_bytes());
         output_buffer[0..8].copy_from_slice(&final_result.to_le_bytes());
+    }
+
+    Ok(())
+}
+
+/// 检查Token账户是否已经初始化
+/// 该函数从sBPF kpl_any_initialized汇编代码转换而来
+///
+/// # 参数说明
+/// * `token_data` - Token数据 (对应汇编中的 r1)
+/// * `state_offset` - 状态偏移量 (对应汇编中的 r2)
+///
+/// # 返回
+/// * `bool` - 如果任何字段已初始化则返回true
+pub fn kpl_any_initialized(token_data: &[u8], state_offset: u64) -> Result<bool> {
+    // 初始化指针偏移量 (mov64 r3, r1; add64 r3, 80)
+    let mut offset = 80;
+
+    // 如果state_offset为0，则使用token_data作为基址 (jne r2, 0, lbb_9525; mov64 r3, r1)
+    if state_offset == 0 {
+        offset = 0;
+    }
+
+    // 检查5个不同位置的初始化标志
+    // 初始化返回值为true (mov64 r0, 1)
+    // 检查第一个位置 (ldxb r1, [r3+0xa])
+    if offset + 0xa < token_data.len() && token_data[offset + 0xa] != 0 {
+        return Ok(true);
+    }
+
+    // 检查第二个位置 (ldxb r1, [r3+0x1a])
+    if offset + 0x1a < token_data.len() && token_data[offset + 0x1a] != 0 {
+        return Ok(true);
+    }
+
+    // 检查第三个位置 (ldxb r1, [r3+0x2a])
+    if offset + 0x2a < token_data.len() && token_data[offset + 0x2a] != 0 {
+        return Ok(true);
+    }
+
+    // 检查第四个位置 (ldxb r1, [r3+0x3a])
+    if offset + 0x3a < token_data.len() && token_data[offset + 0x3a] != 0 {
+        return Ok(true);
+    }
+
+    // 检查第五个位置 (ldxb r1, [r3+0x4a])
+    if offset + 0x4a < token_data.len() && token_data[offset + 0x4a] != 0 {
+        return Ok(true);
+    }
+
+    // 如果没有一个位置被初始化，则返回false (mov64 r0, 0)
+    Ok(false)
+}
+
+/// 更新输入金额
+/// 该函数从sBPF kpl_update_in_amount汇编代码转换而来
+///
+/// # 参数说明
+/// * `token_data` - Token数据 (对应汇编中的 r1)
+/// * `quote_account` - 报价账户 (对应汇编中的 r2)
+/// * `swap_amount` - 交换金额 (对应汇编中的 r3)
+/// * `flag` - 标志位 (对应汇编中的 r4)
+/// * `stack_value` - 栈上的值 (对应汇编中的 r5-0xff8)
+pub fn kpl_update_in_amount(
+    token_data: &[u8],
+    quote_account: &mut [u8],
+    swap_amount: u64,
+    flag: u64,
+    stack_value: u64,
+) -> Result<()> {
+    // 保存r2到栈上 (stxdw [r10-0x8], r2)
+
+    // 设置指针偏移量 (mov64 r2, r1; add64 r2, 80)
+    let mut offset = 80;
+    // 如果flag为0，则使用token_data作为基址 (jne r4, 0, lbb_9592; mov64 r2, r1)
+    if flag == 0 {
+        offset = 0;
+    }
+
+    // 初始化返回值和偏移量 (mov64 r0, 0; mov64 r9, 80)
+    let mut min_amount = 0;
+    let mut data_offset = 80;
+    // 如果flag为0，则设置data_offset为0 (jne r4, 0, lbb_9596; mov64 r9, 0)
+    if flag == 0 {
+        data_offset = 0;
+    }
+
+    // 读取栈上的值 (ldxdw r8, [r5-0xff8])
+    let stack_amount = stack_value;
+
+    // 检查第一个位置是否初始化 (ldxb r6, [r2+0xa])
+    let mut selected_fee = 0;
+    if offset + 0xa < token_data.len() && token_data[offset + 0xa] != 0 {
+        // 读取第一个金额 (add64 r1, r9; ldxdw r1, [r1+0x0])
+        if data_offset < token_data.len() {
+            let amount1 = u64::from_le_bytes(
+                token_data[data_offset..data_offset + 8]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            // 比较金额 (jgt r1, r8, lbb_9605)
+            if amount1 <= stack_amount {
+                // 读取第一个费率 (ldxh r7, [r2+0x8])
+                if offset + 0x8 + 1 < token_data.len() {
+                    selected_fee = u16::from_le_bytes(
+                        token_data[offset + 0x8..offset + 0x8 + 2]
+                            .try_into()
+                            .unwrap_or_default(),
+                    ) as u64;
+                }
+                // 设置最小金额 (mov64 r0, r1)
+                min_amount = amount1;
+            }
+        }
+    }
+
+    // 检查第二个位置是否初始化 (ldxb r1, [r2+0x1a])
+    if offset + 0x1a < token_data.len() && token_data[offset + 0x1a] != 0 {
+        // 读取第二个金额 (ldxdw r1, [r2+0x10])
+        if offset + 0x10 + 7 < token_data.len() {
+            let amount2 = u64::from_le_bytes(
+                token_data[offset + 0x10..offset + 0x10 + 8]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            // 比较金额 (jgt r1, r8, lbb_9612; jgt r0, r1, lbb_9612)
+            if amount2 <= stack_amount && (min_amount == 0 || amount2 < min_amount) {
+                // 读取第二个费率 (ldxh r7, [r2+0x18])
+                if offset + 0x18 + 1 < token_data.len() {
+                    selected_fee = u16::from_le_bytes(
+                        token_data[offset + 0x18..offset + 0x18 + 2]
+                            .try_into()
+                            .unwrap_or_default(),
+                    ) as u64;
+                }
+                // 设置最小金额 (mov64 r0, r1)
+                min_amount = amount2;
+            }
+        }
+    }
+
+    // 检查第三个位置是否初始化 (ldxb r1, [r2+0x2a])
+    if offset + 0x2a < token_data.len() && token_data[offset + 0x2a] != 0 {
+        // 读取第三个金额 (ldxdw r1, [r2+0x20])
+        if offset + 0x20 + 7 < token_data.len() {
+            let amount3 = u64::from_le_bytes(
+                token_data[offset + 0x20..offset + 0x20 + 8]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            // 比较金额 (jgt r1, r8, lbb_9619; jgt r0, r1, lbb_9619)
+            if amount3 <= stack_amount && (min_amount == 0 || amount3 < min_amount) {
+                // 读取第三个费率 (ldxh r7, [r2+0x28])
+                if offset + 0x28 + 1 < token_data.len() {
+                    selected_fee = u16::from_le_bytes(
+                        token_data[offset + 0x28..offset + 0x28 + 2]
+                            .try_into()
+                            .unwrap_or_default(),
+                    ) as u64;
+                }
+                // 设置最小金额 (mov64 r0, r1)
+                min_amount = amount3;
+            }
+        }
+    }
+
+    // 检查第四个位置是否初始化 (ldxb r1, [r2+0x3a])
+    if offset + 0x3a < token_data.len() && token_data[offset + 0x3a] != 0 {
+        // 读取第四个金额 (ldxdw r1, [r2+0x30])
+        if offset + 0x30 + 7 < token_data.len() {
+            let amount4 = u64::from_le_bytes(
+                token_data[offset + 0x30..offset + 0x30 + 8]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            // 比较金额 (jgt r1, r8, lbb_9626; jgt r0, r1, lbb_9626)
+            if amount4 <= stack_amount && (min_amount == 0 || amount4 < min_amount) {
+                // 读取第四个费率 (ldxh r7, [r2+0x38])
+                if offset + 0x38 + 1 < token_data.len() {
+                    selected_fee = u16::from_le_bytes(
+                        token_data[offset + 0x38..offset + 0x38 + 2]
+                            .try_into()
+                            .unwrap_or_default(),
+                    ) as u64;
+                }
+                // 设置最小金额 (mov64 r0, r1)
+                min_amount = amount4;
+            }
+        }
+    }
+
+    // 检查第五个位置是否初始化 (ldxb r1, [r2+0x4a])
+    if offset + 0x4a < token_data.len() && token_data[offset + 0x4a] != 0 {
+        // 读取第五个金额 (ldxdw r1, [r2+0x40])
+        if offset + 0x40 + 7 < token_data.len() {
+            let amount5 = u64::from_le_bytes(
+                token_data[offset + 0x40..offset + 0x40 + 8]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            // 比较金额 (jgt r1, r8, lbb_9632; jgt r0, r1, lbb_9632)
+            if amount5 <= stack_amount && (min_amount == 0 || amount5 < min_amount) {
+                // 读取第五个费率 (ldxh r7, [r2+0x48])
+                if offset + 0x48 + 1 < token_data.len() {
+                    selected_fee = u16::from_le_bytes(
+                        token_data[offset + 0x48..offset + 0x48 + 2]
+                            .try_into()
+                            .unwrap_or_default(),
+                    ) as u64;
+                }
+            }
+        }
+    }
+
+    // 计算调整后的费率 (mov64 r2, 10000; sub64 r2, r7)
+    let adjusted_fee = if flag == 0 {
+        selected_fee
+    } else {
+        10000 - selected_fee
+    };
+
+    // 确保费率为16位值 (and64 r2, 65535)
+    let fee = adjusted_fee & 0xFFFF;
+
+    // 如果费率为0，直接退出 (jeq r2, 0, lbb_9648)
+    if fee != 0 {
+        // 计算报价 (ldxdw r4, [r5-0xff0]; ldxdw r1, [r5-0x1000]; mul64 r2, r4; div64 r2, 10000)
+        // 注意：这里实际需要其他栈上的值，我们简化为使用swap_amount
+        let mut fee_amount = (fee * swap_amount) / 10000;
+
+        // 切换标志位 (xor64 r3, 1)
+        let swap_direction = swap_amount ^ 1;
+
+        // 获取报价 (call get_quote)
+        let quote = get_quote(token_data, fee_amount, swap_direction)?;
+
+        // 更新报价账户中的值 (ldxdw r2, [r10-0x8]; ldxdw r1, [r2+0x0]; sub64 r1, r0; stxdw [r2+0x0], r1)
+        if quote_account.len() >= 8 {
+            let mut current_value =
+                u64::from_le_bytes(quote_account[0..8].try_into().unwrap_or_default());
+            current_value = current_value.saturating_sub(quote);
+            quote_account[0..8].copy_from_slice(&current_value.to_le_bytes());
+        }
     }
 
     Ok(())

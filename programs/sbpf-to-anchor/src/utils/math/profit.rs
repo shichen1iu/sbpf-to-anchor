@@ -252,24 +252,233 @@ pub fn calculate_optimal_strategy_optimised(
 }
 
 /// 数学计算辅助函数 - function_12023
+/// 根据输入值计算浮点数结果
+/// 该函数实现了位操作来计算leading zeros并进行浮点转换
 fn function_12023(value: u64) -> u64 {
-    // TODO: 实现具体的计算逻辑
-    value
+    // 初始化返回值为0 (mov64 r0, 0)
+    let mut result = 0u64;
+
+    // 如果输入值为0, 直接返回0 (jeq r1, 0, lbb_12085)
+    if value == 0 {
+        return result;
+    }
+
+    // 以下实现类似于计算value的前导零数量
+    // 通过位操作填充
+
+    // 开始填充bits (mov64 r3, r1; rsh64 r3, 1; mov64 r2, r1; or64 r2, r3)
+    let mut r2 = value;
+    r2 |= value >> 1;
+
+    // 继续填充 (mov64 r3, r2; rsh64 r3, 2; or64 r2, r3)
+    r2 |= r2 >> 2;
+
+    // 继续填充 (mov64 r3, r2; rsh64 r3, 4; or64 r2, r3)
+    r2 |= r2 >> 4;
+
+    // 继续填充 (mov64 r3, r2; rsh64 r3, 8; or64 r2, r3)
+    r2 |= r2 >> 8;
+
+    // 继续填充 (mov64 r3, r2; rsh64 r3, 16; or64 r2, r3)
+    r2 |= r2 >> 16;
+
+    // 继续填充 (mov64 r3, r2; rsh64 r3, 32; or64 r2, r3)
+    r2 |= r2 >> 32;
+
+    // 取反 (xor64 r2, -1)
+    r2 = !r2;
+
+    // 使用SWAR算法计算前导零数量
+    // 设置掩码 (lddw r3, 0x5555555555555555)
+    let mask1: u64 = 0x5555555555555555;
+
+    // SWAR算法第一步 (mov64 r4, r2; rsh64 r4, 1; and64 r4, r3; sub64 r2, r4)
+    let mut r2_tmp = r2;
+    r2_tmp = (r2_tmp >> 1) & mask1;
+    r2 -= r2_tmp;
+
+    // 设置掩码 (lddw r4, 0x3333333333333333)
+    let mask2: u64 = 0x3333333333333333;
+
+    // SWAR算法第二步 (mov64 r3, r2; and64 r3, r4; rsh64 r2, 2; and64 r2, r4; add64 r3, r2)
+    let mut r3 = r2 & mask2;
+    r3 += (r2 >> 2) & mask2;
+
+    // 继续计算 (mov64 r2, r3; rsh64 r2, 4; add64 r3, r2)
+    r3 += r3 >> 4;
+
+    // 设置掩码 (lddw r2, 0xf0f0f0f0f0f0f0f)
+    let mask3: u64 = 0xf0f0f0f0f0f0f0f;
+
+    // 应用掩码 (and64 r3, r2)
+    r3 &= mask3;
+
+    // 设置乘法常量 (lddw r2, 0x101010101010101)
+    let magic: u64 = 0x101010101010101;
+
+    // 应用乘法并右移 (mul64 r3, r2; rsh64 r3, 56)
+    r3 = (r3 * magic) >> 56;
+
+    // 左移输入值 (lsh64 r1, r3)
+    let shifted_value = value << r3;
+
+    // 计算指数偏移 (lsh64 r3, 52)
+    let exp_offset = r3 << 52;
+
+    // 提取尾数 (mov64 r2, r1; rsh64 r2, 11)
+    let mut mantissa = shifted_value >> 11;
+
+    // 设置结果 (mov64 r0, r2; sub64 r0, r3)
+    result = mantissa - exp_offset;
+
+    // 计算尾数修正 (xor64 r2, -1)
+    let r2_neg = !mantissa;
+
+    // 计算符号位 (lsh64 r1, 53; mov64 r3, r1; rsh64 r3, 63; and64 r3, r2; sub64 r1, r3)
+    let sign_bit = (shifted_value << 53) >> 63;
+    let correction = sign_bit & r2_neg;
+    let corrected_value = (shifted_value << 53) - correction;
+
+    // 调整结果 (rsh64 r1, 63; add64 r0, r1)
+    result += corrected_value >> 63;
+
+    // 添加常量 (lddw r1, 0x43d0000000000000; add64 r0, r1)
+    // 添加浮点数偏移量 (1085)
+    result += 0x43d0000000000000;
+
+    result
 }
 
 /// 数学计算辅助函数 - function_11552
 fn function_11552(value: u64, multiplier: u64) -> u64 {
-    // TODO: 实现具体的计算逻辑
-    value
+    // 根据sBPF汇编，这个函数只是简单地调用了function_11768然后退出
+    // call function_11768
+    // exit
+    function_11768(value, multiplier)
+}
+
+/// 数学计算辅助函数 - function_11768
+/// 该函数实现乘法操作并处理可能的溢出
+fn function_11768(value: u64, multiplier: u64) -> u64 {
+    // 检查乘数是否为0，如果是则返回0 (jeq r2, 0, lbb_11952)
+    if multiplier == 0 {
+        return 0;
+    }
+
+    // 检查value是否为0，如果是则返回0 (jeq r1, 0, lbb_11952)
+    if value == 0 {
+        return 0;
+    }
+
+    // 提取value的低32位 (mov64 r6, r1; lsh64 r6, 32; rsh64 r6, 32)
+    let value_lo = value & 0xFFFFFFFF;
+
+    // 提取multiplier的低32位 (mov64 r7, r2; lsh64 r7, 32; rsh64 r7, 32)
+    let multiplier_lo = multiplier & 0xFFFFFFFF;
+
+    // 提取value的高32位 (mov64 r8, r1; rsh64 r8, 32)
+    let value_hi = value >> 32;
+
+    // 提取multiplier的高32位 (mov64 r9, r2; rsh64 r9, 32)
+    let multiplier_hi = multiplier >> 32;
+
+    // 计算低32位相乘的结果 (mul64 r6, r7)
+    let lo_mul = value_lo * multiplier_lo;
+
+    // 计算高32位和低32位的交叉乘积 (mul64 r7, r8; mul64 r9, r6)
+    let cross_mul1 = multiplier_lo * value_hi;
+    let cross_mul2 = multiplier_hi * value_lo;
+
+    // 计算高32位相乘的结果 (mul64 r8, r9)
+    let mut hi_mul = value_hi * multiplier_hi;
+
+    // 提取lo_mul的高32位 (mov64 r0, r6; rsh64 r0, 32)
+    let lo_mul_hi = lo_mul >> 32;
+
+    // 计算中间结果的低32位 (add64 r6, r7; add64 r6, r9)
+    let mut middle_result = lo_mul_hi + cross_mul1 + cross_mul2;
+
+    // 检查加法溢出 (jge r6, r7, lbb_11842; add64 r8, 1)
+    if middle_result < cross_mul1 {
+        hi_mul += 1;
+    }
+
+    // 继续检查溢出 (jge r6, r9, lbb_11848; add64 r8, 1)
+    if middle_result < cross_mul2 {
+        hi_mul += 1;
+    }
+
+    // 提取中间结果的高32位 (mov64 r7, r6; rsh64 r7, 32)
+    let middle_result_hi = middle_result >> 32;
+
+    // 计算最终的高64位结果 (add64 r8, r7)
+    let mut result_hi = hi_mul + middle_result_hi;
+
+    // 构建最终的64位结果
+    // 低32位来自lo_mul (mov64 r7, r6; lsh64 r7, 32)
+    let low_part = (middle_result & 0xFFFFFFFF) << 32;
+
+    // 保留lo_mul的低32位 (lsh64 r6, 32; rsh64 r6, 32)
+    let lowest_part = lo_mul & 0xFFFFFFFF;
+
+    // 组合成完整的低64位结果 (or64 r6, r7)
+    let result_lo = lowest_part | low_part;
+
+    // 最终结果为高64位
+    result_hi
 }
 
 /// 数学计算辅助函数 - function_9815
+/// 该函数处理IEEE-754浮点数格式，进行特殊范围检查和位操作
 fn function_9815(value: u64) -> u64 {
-    // TODO: 实现具体的计算逻辑
-    value
-}
+    // 初始化返回值为0 (mov64 r0, 0)
+    let mut result = 0u64;
 
-fn get_quote(liquidity_info: &[u8], quote_amount: u64, swap_direction: bool) -> Result<u64> {
-    // TODO: Implement based on your pool's logic
-    Ok(0)
+    // 设置下界常量 0x3ff0000000000000 (lddw r2, 0x3ff0000000000000)
+    let lower_bound: u64 = 0x3ff0000000000000;
+
+    // 如果value小于下界，直接返回0 (jgt r2, r1, lbb_9838)
+    if lower_bound > value {
+        return result;
+    }
+
+    // 设置上界常量 0x43f0000000000000 (lddw r2, 0x43f0000000000000)
+    let upper_bound: u64 = 0x43f0000000000000;
+
+    // 如果value大于等于上界，进行特殊处理 (jgt r2, r1, lbb_9828)
+    if upper_bound <= value {
+        // 设置结果为-1 (mov64 r0, -1)
+        result = u64::MAX; // -1 的无符号表示
+
+        // 设置另一个边界值 0x7ff0000000000001 (lddw r2, 0x7ff0000000000001)
+        let max_bound: u64 = 0x7ff0000000000001;
+
+        // 如果value小于max_bound，返回-1，否则返回0 (jgt r2, r1, lbb_9838; mov64 r0, 0)
+        if max_bound <= value {
+            result = 0;
+        }
+
+        // 返回结果 (ja lbb_9838)
+        return result;
+    }
+
+    // 处理在正常范围内的值 (lbb_9828)
+    // 左移value 11位 (mov64 r0, r1; lsh64 r0, 11)
+    result = value << 11;
+
+    // 设置最高位为1 (lddw r2, 0x8000000000000000; or64 r0, r2)
+    let high_bit: u64 = 0x8000000000000000;
+    result |= high_bit;
+
+    // 提取指数部分 (rsh64 r1, 52)
+    let exponent = value >> 52;
+
+    // 计算右移量 (mov64 r2, 62; sub64 r2, r1; and64 r2, 63)
+    let shift_amount = (62 - exponent) & 63;
+
+    // 根据计算出的位移量右移结果 (rsh64 r0, r2)
+    result >>= shift_amount;
+
+    // 返回最终结果
+    result
 }

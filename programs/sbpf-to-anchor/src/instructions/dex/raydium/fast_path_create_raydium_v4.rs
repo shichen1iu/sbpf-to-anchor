@@ -1,5 +1,7 @@
 use crate::instructions::dex::raydium::state::FastPathCreateRaydiumParams;
 use anchor_lang::prelude::*;
+use crate::states::*;
+
 
 /// Raydium快速路径创建池指令
 ///
@@ -17,7 +19,7 @@ pub struct FastPathCreateRaydiumV4<'info> {
         space = 2360, 
         owner = system_program.key()
     )]
-    pub raydium_pool: AccountInfo<'info>,
+    pub pool: AccountInfo<'info>,
     
     /// 用于存储池数据的账户
     #[account(init,
@@ -43,15 +45,11 @@ pub fn fast_path_create_raydium_v4(
     let pool_id = params.pool_id;
     let config_data = params.config_data;
 
-    // 由于使用了init宏，Anchor已经自动创建了账户，
-    // 所以我们不需要再手动创建账户了
-
     // 初始化池数据
     let pool_data = &ctx.accounts.pool_data_account;
 
     // 写入池ID
     let mut pool_data_bytes = pool_data.try_borrow_mut_data()?;
-    // 设置池ID在偏移量0x930处
     let offset = 0x930;
     if pool_data_bytes.len() >= offset + 4 {
         pool_data_bytes[offset..offset + 4].copy_from_slice(&pool_id.to_le_bytes());
@@ -63,13 +61,9 @@ pub fn fast_path_create_raydium_v4(
         pool_data_bytes[0..8].copy_from_slice(&signature_bytes);
     }
 
-    // 初始化模板数据
-    // 复制从偏移量8到960的952字节数据
-    // 从汇编中可以看出，这是从地址0x100019250开始的952字节数据
+
     if pool_data_bytes.len() >= 960 {
-        // 示例：复制模板数据
         // 这里需要实际的模板数据
-        // 从原始sBPF代码看，是复制了预设的模板数据
         // pool_data_bytes[8..960].copy_from_slice(...);
     }
 
@@ -84,7 +78,6 @@ pub fn fast_path_create_raydium_v4(
         }
 
         // 复制模板数据
-        // 从汇编看，是从地址0x100019608开始的272字节数据
         // pool_data_bytes[1800..2072].copy_from_slice(...);
     }
 

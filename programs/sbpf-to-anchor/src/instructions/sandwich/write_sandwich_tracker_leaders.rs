@@ -1,5 +1,7 @@
 use crate::instructions::sandwich::state::SandwichTracker;
 use anchor_lang::prelude::*;
+use crate::states::*;
+
 
 /// 写入三明治追踪器领导者指令
 #[derive(Accounts)]
@@ -43,7 +45,6 @@ pub fn write_sandwich_tracker_leaders(ctx: Context<WriteSandwichTrackerLeaders>)
     let base_offset = if leader_data.len() >= 8 {
         let offset_bytes = &leader_data[0..8];
         let offset = u64::from_le_bytes(offset_bytes.try_into().unwrap());
-        // 左移一位 (乘以2)
         offset << 1
     } else {
         0

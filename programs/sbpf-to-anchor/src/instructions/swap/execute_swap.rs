@@ -49,10 +49,6 @@ pub struct ExecuteSwap<'info> {
         bump
     )]
     pub program_pda: AccountInfo<'info>,
-
-    /// 交换指令需要的其他账户
-    /// @account 剩余所有交换需要的账户
-    pub remaining_accounts: UncheckedAccount<'info>,
 }
 
 /// 执行交换
